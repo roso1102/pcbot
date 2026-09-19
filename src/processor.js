@@ -74,21 +74,28 @@ export async function processQueueMessage(message, env, fetchImpl = fetch) {
 		const page = await readPage(job.normalized_url, env, fetchImpl);
 		await updateProgress(job, body.progressMessageId, `🧠 Extracting summary and tags…\n${job.normalized_url}`, env, fetchImpl);
 		let extraction;
-		let extractor = "gemini";
-		try {
-			extraction = await extractWithGemini(job.normalized_url, page.content, env, fetchImpl);
-		} catch (geminiError) {
-			if (!env?.GROQ_API_KEY) throw geminiError;
-			geminiError.attemptNumber = (job.attempt_count ?? 0) + 1;
-			await recordError(env.DB, job.id, geminiError);
-			await updateProgress(job, body.progressMessageId, `⚠️ Gemini unavailable (${geminiError.code}). Trying Groq fallback…\n${job.normalized_url}`, env, fetchImpl);
+		let extractor = "groq";
+		if ((env?.EXTRACTION_PROVIDER || "groq").toLowerCase() === "gemini") {
+			extractor = "gemini";
 			try {
-				extraction = await extractWithGroq(job.normalized_url, page.content, env, fetchImpl);
-				extractor = "groq_fallback";
-			} catch (groqError) {
-				groqError.message = `Groq fallback failed after ${geminiError.code}: ${groqError.message}`;
-				throw groqError;
+				extraction = await extractWithGemini(job.normalized_url, page.content, env, fetchImpl);
+			} catch (geminiError) {
+				if (!env?.GROQ_API_KEY) throw geminiError;
+				geminiError.attemptNumber = (job.attempt_count ?? 0) + 1;
+				await recordError(env.DB, job.id, geminiError);
+				await updateProgress(job, body.progressMessageId, `⚠️ Gemini unavailable (${geminiError.code}). Trying Groq fallback…\n${job.normalized_url}`, env, fetchImpl);
+				try {
+					extraction = await extractWithGroq(job.normalized_url, page.content, env, fetchImpl);
+					extractor = "groq_fallback";
+				} catch (groqError) {
+					groqError.message = `Groq fallback failed after ${geminiError.code}: ${groqError.message}`;
+					throw groqError;
+				}
 			}
+		} else {
+			// Groq-only mode avoids spending Gemini quota and prevents queue retries
+			// from reissuing Gemini calls after a provider failure.
+			extraction = await extractWithGroq(job.normalized_url, page.content, env, fetchImpl);
 		}
 		const provider = `${page.provider}+${extractor}`;
 		const sheetsConfigured = Boolean(env?.GOOGLE_SHEETS_BRIDGE_URL || env?.GOOGLE_SHEETS_BRIDGE_SECRET);

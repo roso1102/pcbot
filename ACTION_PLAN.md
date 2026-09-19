@@ -11,8 +11,8 @@ This plan is ordered to reduce migration risk. Complete each phase's acceptance 
 - Phase 5: infrastructure complete. Both Queues exist, bindings and retry/DLQ settings are deployed, and the temporary consumer guard retries messages until the real processor is implemented.
 - Phase 6: complete for the first end-to-end path. Intake persisted a Telegram URL in D1 and published a Queue job.
 - Phase 7: complete for the first end-to-end path. TinyFish successfully read the LinkedIn short URL; Firecrawl remains optional and disabled.
-- Phase 8: complete for the first end-to-end path. Gemini successfully extracted and the job reached `completed` with provider `tinyfish+gemini`.
-- Telegram status notifications are implemented and require `TELEGRAM_BOT_TOKEN`; successful jobs now report the Gemini summary, normalized hashtags, author/date/event, and source. Group allowlisting remains optional but recommended.
+- Phase 8: complete for the first end-to-end path. Groq Llama 3.1 8B Instant is now the deployed primary extractor; Gemini remains available only as an explicit opt-in.
+- Telegram status notifications are implemented and require `TELEGRAM_BOT_TOKEN`; successful jobs report the Groq summary, normalized tags, author/date/event, and source. Group allowlisting remains optional but recommended.
 - Integration audit found and fixed two blockers: TinyFish Fetch responses use `results[0].text`, and Gemini REST structured output uses `response_mime_type`/`response_schema`. The fixes are tested locally; redeploy and a disposable end-to-end job are required.
 - The summary/hashtag notification patch passes local tests and dry-run; deploy it before live verification.
 - Group UX now uses one Telegram progress message that is edited through queued, reading, extracting, and final states. Telegram draft streaming remains private-chat-only; this staged edit flow is the group-compatible behavior.

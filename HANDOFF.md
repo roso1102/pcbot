@@ -29,7 +29,7 @@ Phase 1 application code and tests were added and deployed. Wrangler dry-run pas
 
 Both Queues now exist remotely. `wrangler.jsonc` has a `JOBS_QUEUE` producer binding and a consumer configured for three retries with `telegram-link-jobs-dlq` as its dead-letter queue. The deployed Worker currently has the temporary consumer guard. Local Phase 6 code now persists and publishes jobs, but it has not been deployed yet; deploy it only with the understanding that the consumer still retries until the extraction processor is implemented.
 
-The local provider layer is in `src/page-reader.js`: TinyFish Fetch is primary, Firecrawl is optional fallback only when its key exists, and content is normalized before model extraction. It strips common LinkedIn UI lines and repairs common UTF-8 mojibake. `src/processor.js` reads the D1 job, calls Gemini first, falls back to Groq when `GROQ_API_KEY` is configured and Gemini fails, persists structured output, records the original provider error, and sends Telegram success/failure status when `TELEGRAM_BOT_TOKEN` is configured. The latest local success message identifies the extractor used. Group UX sends one queued progress message and edits it through reading, extraction, fallback, and final/error states; the queue payload carries its Telegram message ID for redelivery-safe edits.
+The local provider layer is in `src/page-reader.js`: TinyFish Fetch is primary, Firecrawl is optional fallback only when its key exists, and content is normalized before model extraction. It strips common LinkedIn UI lines and repairs common UTF-8 mojibake. `src/processor.js` reads the D1 job, uses Groq Llama 3.1 8B Instant by default, and keeps Gemini only as an explicit `EXTRACTION_PROVIDER=gemini` opt-in. It persists structured output, records provider errors, and sends Telegram success/failure status when `TELEGRAM_BOT_TOKEN` is configured. The latest local success message identifies the extractor used. Group UX sends one queued progress message and edits it through reading, extraction, and final/error states; the queue payload carries its Telegram message ID for redelivery-safe edits.
 
 The local intake now avoids publishing a second Queue message when a duplicate job is already `queued` or `processing`, and schedules a Telegram “already saved or in progress” message for duplicates. This fix requires deployment before verification; Google Sheets row numbers will be added during Phase 9.
 
@@ -103,7 +103,7 @@ Expected names (validate against code before creating them):
 - `TINYFISH_API_KEY`
 - optionally `FIRECRAWL_API_KEY` (fallback disabled when absent)
 - `GEMINI_API_KEY`
-- optionally `GROQ_API_KEY` for model fallback
+- `GROQ_API_KEY` for primary model extraction
 - `GOOGLE_SHEETS_BRIDGE_URL`
 - `GOOGLE_SHEETS_BRIDGE_SECRET`
 - `TELEGRAM_ALLOWED_CHAT_IDS`

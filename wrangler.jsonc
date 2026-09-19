@@ -7,6 +7,10 @@
 	"name": "telegram-link-bot",
 	"main": "src/index.js",
 	"compatibility_date": "2026-09-16",
+	"vars": {
+		"EXTRACTION_PROVIDER": "groq",
+		"GROQ_MODEL": "llama-3.1-8b-instant"
+	},
 	"observability": {
 		"enabled": true
 	},

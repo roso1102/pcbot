@@ -36,8 +36,8 @@ Cloudflare Worker
    Cloudflare Queue consumer
           |
           |-- TinyFish Fetch page reader (Firecrawl optional fallback)
-          |-- Gemini structured extraction
-          |-- Groq fallback when Gemini is unavailable or quota-limited
+          |-- Groq structured extraction (Llama 3.1 8B Instant)
+          |-- Gemini retained only as an explicit opt-in provider
           |-- Google Sheets persistence (Links / Status / Failures / Archive)
           |-- Calendar/reminder module (future, deferred)
           |-- D1 status/error update
@@ -101,8 +101,9 @@ Use bindings for Cloudflare resources and secrets for credentials. Names below a
 | TinyFish authorization | `TINYFISH_API_KEY` | Secret |
 | Firecrawl authorization | `FIRECRAWL_API_KEY` | Optional secret; disabled when absent |
 | Gemini authorization | `GEMINI_API_KEY` | Secret |
-| Groq fallback authorization | `GROQ_API_KEY` | Optional secret; used when Gemini fails |
-| Groq fallback model | `GROQ_MODEL` | Optional variable; defaults to `llama-3.1-8b-instant` (JSON Object Mode) |
+| Extraction provider | `EXTRACTION_PROVIDER` | Worker variable; defaults to `groq`; set to `gemini` only to opt back in |
+| Groq authorization | `GROQ_API_KEY` | Secret; used for primary extraction |
+| Groq model | `GROQ_MODEL` | Worker variable; `llama-3.1-8b-instant` (JSON Object Mode) |
 | Sheets bridge URL | `GOOGLE_SHEETS_BRIDGE_URL` | Secret or non-secret variable |
 | Sheets bridge secret | `GOOGLE_SHEETS_BRIDGE_SECRET` | Secret |
 | Sheet action endpoint | `POST /sheet-action` | HMAC-signed Apps Script requests |
@@ -215,7 +216,7 @@ The final webhook cutover is intentionally last. Before it:
 - [ ] The Worker is deployed and healthy.
 - [ ] Intake tests pass without using the production webhook.
 - [ ] D1 and Queue/DLQ behavior is proven.
-- [ ] TinyFish/Firecrawl and Gemini errors/rate limits are tested.
+- [ ] TinyFish/Firecrawl and Groq errors/rate limits are tested.
 - [ ] Google writes are idempotent and verified in test destinations.
 - [ ] Telegram success and failure notifications are verified.
 - [ ] Duplicate updates, duplicate URLs, rate limits, timeouts, malformed content, and blocked pages are tested.
