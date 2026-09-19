@@ -1,8 +1,8 @@
 import { buildExtractionPrompt, CONTENT_TYPES, GeminiError, validateExtraction } from "./gemini";
 
-// Llama 3.1 is fast and supports JSON Object Mode. Strict JSON Schema mode
-// remains available for GPT-OSS/Qwen models when explicitly selected.
-const DEFAULT_MODEL = "llama-3.1-8b-instant";
+// GPT-OSS 120B is the strongest general-purpose option in the configured
+// quota group and supports Groq strict JSON Schema output.
+const DEFAULT_MODEL = "openai/gpt-oss-120b";
 const GROQ_TIMEOUT_MS = 45000;
 const MAX_GROQ_CONTENT_CHARS = 40_000;
 

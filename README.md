@@ -103,7 +103,7 @@ Use bindings for Cloudflare resources and secrets for credentials. Names below a
 | Gemini authorization | `GEMINI_API_KEY` | Secret |
 | Extraction provider | `EXTRACTION_PROVIDER` | Worker variable; defaults to `groq`; set to `gemini` only to opt back in |
 | Groq authorization | `GROQ_API_KEY` | Secret; used for primary extraction |
-| Groq model | `GROQ_MODEL` | Worker variable; `llama-3.1-8b-instant` (JSON Object Mode) |
+| Groq model | `GROQ_MODEL` | Worker variable; `openai/gpt-oss-120b` (strict JSON Schema mode) |
 | Sheets bridge URL | `GOOGLE_SHEETS_BRIDGE_URL` | Secret or non-secret variable |
 | Sheets bridge secret | `GOOGLE_SHEETS_BRIDGE_SECRET` | Secret |
 | Sheet action endpoint | `POST /sheet-action` | HMAC-signed Apps Script requests |
