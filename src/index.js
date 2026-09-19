@@ -259,10 +259,12 @@ async function handleTelegram(request, env, ctx) {
 		try {
 			const result = await enqueueJobs(update, urls, env);
 			if (result.error === "queue_unavailable") return json({ ok: false, error: result.error }, 503);
-			if ((result.duplicateJobs?.length || result.retries?.length) && env?.TELEGRAM_BOT_TOKEN && ctx?.waitUntil) {
+			// A failed job gets a fresh progress message above. Do not send a second
+			// retry notice: it can arrive after the retry has already succeeded and
+			// leave a misleading message below the final result.
+			if (result.duplicateJobs?.length && env?.TELEGRAM_BOT_TOKEN && ctx?.waitUntil) {
 				const duplicateText = result.duplicateJobs.map(({ url, jobId, status }) => `Already saved or in progress:\n${url}\nJob: ${jobId}\nStatus: ${status}`);
-				const retryText = result.retries.map(({ url, jobId }) => `Previous attempt failed; retrying:\n${url}\nJob: ${jobId}`);
-				ctx.waitUntil(sendTelegramMessage(getChatId(update), [...duplicateText, ...retryText].join("\n\n"), env).catch(() => undefined));
+				ctx.waitUntil(sendTelegramMessage(getChatId(update), duplicateText.join("\n\n"), env).catch(() => undefined));
 			}
 			return json({ ok: true, status: "queued", queued: result.queued, duplicates: result.duplicates, retries: result.retries.map(({ url }) => url) });
 		} catch (error) {
