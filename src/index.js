@@ -1,4 +1,5 @@
 import { processQueueMessage } from "./processor";
+import { CONTENT_TYPES } from "./gemini";
 import { sendTelegramMessage } from "./telegram";
 
 const SERVICE_NAME = "telegram-link-bot";
@@ -140,7 +141,7 @@ async function handleSheetAction(request, env) {
 	const action = String(payload?.action ?? "").trim().toLowerCase();
 	const recordKey = String(payload?.recordKey ?? "").trim();
 	const requestedBy = String(payload?.requestedBy ?? "sheet-user").slice(0, 200);
-	if (!["archive", "restore", "delete"].includes(action) || !/^[a-f0-9]{64}$/i.test(recordKey)) return json({ ok: false, error: "invalid_action" }, 400);
+	if (!["archive", "restore", "save_edits", "delete"].includes(action) || !/^[a-f0-9]{64}$/i.test(recordKey)) return json({ ok: false, error: "invalid_action" }, 400);
 	const job = await env.DB.prepare("SELECT id, status, record_state, normalized_url, url_hash, result_json FROM jobs WHERE url_hash = ?").bind(recordKey).first();
 	if (!job) return json({ ok: false, error: "job_not_found" }, 404);
 	if (job.status === "processing" || job.status === "queued") return json({ ok: false, error: "job_in_progress" }, 409);
@@ -148,6 +149,23 @@ async function handleSheetAction(request, env) {
 		if (job.record_state !== "archived") return json({ ok: true, status: "already_active", jobId: job.id });
 		await env.DB.prepare("UPDATE jobs SET record_state = 'active', state_changed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(job.id).run();
 		return json({ ok: true, status: "restored", jobId: job.id });
+	}
+	if (action === "save_edits") {
+		const fields = payload?.fields;
+		if (!fields || typeof fields !== "object" || Array.isArray(fields)) return json({ ok: false, error: "invalid_edit_fields" }, 400);
+		const type = String(fields.type ?? "").trim().toLowerCase();
+		if (!CONTENT_TYPES.includes(type)) return json({ ok: false, error: "invalid_type" }, 400);
+		const deadline = String(fields.deadline ?? "").trim().slice(0, 120);
+		const title = String(fields.title ?? "").trim().slice(0, 500);
+		const summary = String(fields.summary ?? "").trim().slice(0, 4000);
+		const userNote = String(fields.userNote ?? "").trim().slice(0, 2000);
+		const tags = String(fields.tags ?? "").split(",").map((tag) => tag.trim().replace(/^#+/, "").toLowerCase()).filter(Boolean).filter((tag, index, all) => all.indexOf(tag) === index).slice(0, 30);
+		let result;
+		try { result = JSON.parse(job.result_json || "{}"); } catch { return json({ ok: false, error: "result_unavailable" }, 409); }
+		result.extraction = { ...(result.extraction || {}), title, summary, type, deadline: deadline || null, tags };
+		result.edited = { at: new Date().toISOString(), by: requestedBy };
+		await env.DB.prepare("UPDATE jobs SET result_json = ?, user_note = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(JSON.stringify(result), userNote || null, job.id).run();
+		return json({ ok: true, status: "saved_edits", jobId: job.id });
 	}
 	if (action === "archive") {
 		await env.DB.prepare("UPDATE jobs SET record_state = 'archived', state_changed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(job.id).run();

@@ -151,7 +151,7 @@ Inspect production logs without printing request authorization headers or enviro
 npx wrangler tail telegram-link-bot
 ```
 
-The `Links` tab includes an `action` dropdown. Selecting `Archive` or `Delete` calls the signed `/sheet-action` endpoint first; the row is moved or removed only after D1 confirms the action. Set Apps Script properties `WORKER_ACTION_URL=https://telegram-link-bot.pcbot.workers.dev/sheet-action` and `ARCHIVE_TAB=Archive`, then run `installSheetActionTrigger()` once in the bridge editor.
+The `Links` and `Archive` tabs include an `action` dropdown. Selecting `Save edits` validates and writes title, summary, user note, type, deadline, and tags into the canonical D1 JSON. Selecting `Archive`, `Restore`, or `Delete` calls the signed `/sheet-action` endpoint first; rows move or disappear only after D1 confirms the action. Set Apps Script properties `WORKER_ACTION_URL=https://telegram-link-bot.pcbot.workers.dev/sheet-action` and `ARCHIVE_TAB=Archive`, then run `installSheetActionTrigger()` once in the bridge editor.
 
 Every deployment should have a recorded commit SHA and a short smoke-test result in its pull request or release notes.
 

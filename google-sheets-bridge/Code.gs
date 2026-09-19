@@ -133,7 +133,7 @@ function formatMainSheet_(sheet) {
   sheet.setColumnWidth(11, 160);
   sheet.setColumnWidth(12, 110);
   const archiveName = PropertiesService.getScriptProperties().getProperty('ARCHIVE_TAB') || 'Archive';
-  const actionOptions = sheet.getName() === archiveName ? ['Keep', 'Restore', 'Delete'] : ['Keep', 'Archive', 'Delete'];
+  const actionOptions = sheet.getName() === archiveName ? ['Keep', 'Save edits', 'Restore', 'Delete'] : ['Keep', 'Save edits', 'Archive', 'Delete'];
   const actionRule = SpreadsheetApp.newDataValidation().requireValueInList(actionOptions, true).setAllowInvalid(false).build();
   sheet.getRange(2, 12, Math.max(sheet.getMaxRows() - 1, 1), 1).setDataValidation(actionRule);
   const typeRule = SpreadsheetApp.newDataValidation().requireValueInList(TYPE_OPTIONS, true).setAllowInvalid(false).build();
@@ -207,7 +207,7 @@ function handleSheetActionEdit(e) {
   const currentTab = e.range.getSheet().getName();
   if (currentTab !== tabName && currentTab !== archiveName) return;
   const action = String(e.value || '').trim().toLowerCase();
-  const allowedActions = currentTab === archiveName ? ['restore', 'delete'] : ['archive', 'delete'];
+  const allowedActions = currentTab === archiveName ? ['save edits', 'restore', 'delete'] : ['save edits', 'archive', 'delete'];
   if (!allowedActions.includes(action)) return;
   const rowNumber = e.range.getRow();
   const recordKey = String(e.range.getSheet().getRange(rowNumber, 13).getValue() || '').trim();
@@ -226,6 +226,26 @@ function handleSheetActionEdit(e) {
       requestedBy: Session.getEffectiveUser().getEmail() || 'sheet-user',
     });
     if (!response.ok) throw new Error(response.error || 'Worker rejected the action.');
+    if (action === 'save edits') {
+      const rowData = e.range.getSheet().getRange(rowNumber, 1, 1, HEADERS.length).getValues()[0];
+      const response = callWorkerAction_(workerUrl, secret, {
+        action: 'save_edits',
+        recordKey: recordKey,
+        requestedBy: Session.getEffectiveUser().getEmail() || 'sheet-user',
+        fields: {
+          title: rowData[1],
+          summary: rowData[4],
+          userNote: rowData[5],
+          type: rowData[6],
+          deadline: rowData[7],
+          tags: rowData[8],
+        },
+      });
+      if (!response.ok) throw new Error(response.error || 'Worker rejected the edit.');
+      e.range.setValue('');
+      spreadsheet.toast('Edits saved to D1 JSON.');
+      return;
+    }
     if (action === 'archive') {
       const archive = getOrCreateSheet_(spreadsheet, archiveName);
       migrateMainSchema_(archive);
