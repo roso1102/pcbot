@@ -112,6 +112,47 @@ async function recordError(db, jobId, stage, errorCode, message, retryable = fal
 	await db.prepare("INSERT INTO errors (job_id, stage, error_code, message, retryable) VALUES (?, ?, ?, ?, ?)").bind(jobId, stage, errorCode, String(message).slice(0, 500), retryable ? 1 : 0).run();
 }
 
+function base64UrlEncode(bytes) {
+	let binary = "";
+	for (const byte of bytes) binary += String.fromCharCode(byte);
+	return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function verifySignedSheetAction(request, env) {
+	const secret = String(env?.GOOGLE_SHEETS_BRIDGE_SECRET ?? "").trim();
+	if (!secret) return { ok: false, status: 503, error: "sheet_action_not_configured" };
+	let envelope;
+	try { envelope = await request.json(); } catch { return { ok: false, status: 400, error: "invalid_json" }; }
+	if (!envelope || typeof envelope.timestamp !== "string" || typeof envelope.payload_json !== "string" || typeof envelope.signature !== "string") return { ok: false, status: 401, error: "unauthorized" };
+	const timestamp = Number(envelope.timestamp);
+	if (!Number.isInteger(timestamp) || Math.abs(Math.floor(Date.now() / 1000) - timestamp) > 300) return { ok: false, status: 401, error: "unauthorized" };
+	const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+	const digest = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${envelope.timestamp}.${envelope.payload_json}`));
+	if (!constantTimeEqual(base64UrlEncode(new Uint8Array(digest)), envelope.signature)) return { ok: false, status: 401, error: "unauthorized" };
+	try { return { ok: true, payload: JSON.parse(envelope.payload_json) }; } catch { return { ok: false, status: 400, error: "invalid_payload" }; }
+}
+
+async function handleSheetAction(request, env) {
+	if (request.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405, { allow: "POST" });
+	const verification = await verifySignedSheetAction(request, env);
+	if (!verification.ok) return json({ ok: false, error: verification.error }, verification.status);
+	const payload = verification.payload;
+	const action = String(payload?.action ?? "").trim().toLowerCase();
+	const recordKey = String(payload?.recordKey ?? "").trim();
+	const requestedBy = String(payload?.requestedBy ?? "sheet-user").slice(0, 200);
+	if (!["archive", "delete"].includes(action) || !/^[a-f0-9]{64}$/i.test(recordKey)) return json({ ok: false, error: "invalid_action" }, 400);
+	const job = await env.DB.prepare("SELECT id, status, record_state, normalized_url, url_hash, result_json FROM jobs WHERE url_hash = ?").bind(recordKey).first();
+	if (!job) return json({ ok: false, error: "job_not_found" }, 404);
+	if (job.status === "processing" || job.status === "queued") return json({ ok: false, error: "job_in_progress" }, 409);
+	if (action === "archive") {
+		await env.DB.prepare("UPDATE jobs SET record_state = 'archived', state_changed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(job.id).run();
+		return json({ ok: true, status: "archived", jobId: job.id });
+	}
+	await env.DB.prepare("INSERT INTO job_deletions (job_id, url_hash, normalized_url, result_json, deleted_by) VALUES (?, ?, ?, ?, ?)").bind(job.id, job.url_hash, job.normalized_url, job.result_json ?? null, requestedBy).run();
+	await env.DB.prepare("DELETE FROM jobs WHERE id = ?").bind(job.id).run();
+	return json({ ok: true, status: "deleted", jobId: job.id });
+}
+
 async function enqueueJobs(update, urls, env) {
 	const updateId = Number(update.update_id);
 	if (!Number.isSafeInteger(updateId)) return { error: "update_id_required" };
@@ -137,11 +178,11 @@ async function enqueueJobs(update, urls, env) {
 		`).bind(jobId, updateId, urlIndex, chatId === undefined ? null : String(chatId), message?.message_id ?? null, normalizedUrl, normalizedUrl, urlHash, originalMessage, userNote, senderName, senderUsername).run();
 		let selectedJobId = jobId;
 		if (!insert.meta?.changes) {
-			const existing = await env.DB.prepare("SELECT id, status FROM jobs WHERE url_hash = ?").bind(urlHash).first();
+			const existing = await env.DB.prepare("SELECT id, status, record_state FROM jobs WHERE url_hash = ?").bind(urlHash).first();
 			selectedJobId = existing?.id;
 			duplicates.push(normalizedUrl);
 			if (selectedJobId) {
-				const notice = { url: normalizedUrl, jobId: selectedJobId, status: existing.status };
+				const notice = { url: normalizedUrl, jobId: selectedJobId, status: existing.record_state === "archived" ? "archived" : existing.status };
 				if (existing.status === "failed") retries.push(notice);
 				else duplicateJobs.push(notice);
 			}
@@ -216,6 +257,7 @@ export default {
 			return json({ ok: true, service: SERVICE_NAME });
 		}
 		if (url.pathname === "/telegram") return handleTelegram(request, env, ctx);
+		if (url.pathname === "/sheet-action") return handleSheetAction(request, env);
 		return json({ ok: false, error: "not_found" }, 404);
 	},
 

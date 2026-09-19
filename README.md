@@ -38,7 +38,7 @@ Cloudflare Worker
           |-- TinyFish Fetch page reader (Firecrawl optional fallback)
           |-- Gemini structured extraction
           |-- Groq fallback when Gemini is unavailable or quota-limited
-          |-- Google Sheets persistence (current focus)
+          |-- Google Sheets persistence (Links / Status / Failures / Archive)
           |-- Calendar/reminder module (future, deferred)
           |-- D1 status/error update
           `-- Telegram status message
@@ -105,6 +105,7 @@ Use bindings for Cloudflare resources and secrets for credentials. Names below a
 | Groq fallback model | `GROQ_MODEL` | Optional variable; defaults to `openai/gpt-oss-20b` |
 | Sheets bridge URL | `GOOGLE_SHEETS_BRIDGE_URL` | Secret or non-secret variable |
 | Sheets bridge secret | `GOOGLE_SHEETS_BRIDGE_SECRET` | Secret |
+| Sheet action endpoint | `POST /sheet-action` | HMAC-signed Apps Script requests |
 | Target calendar | Not configured yet | Deferred future feature |
 | Telegram allowlist | `TELEGRAM_ALLOWED_CHAT_IDS` | Secret or non-secret variable |
 
@@ -149,6 +150,8 @@ Inspect production logs without printing request authorization headers or enviro
 ```powershell
 npx wrangler tail telegram-link-bot
 ```
+
+The `Links` tab includes an `action` dropdown. Selecting `Archive` or `Delete` calls the signed `/sheet-action` endpoint first; the row is moved or removed only after D1 confirms the action. Set Apps Script properties `WORKER_ACTION_URL=https://telegram-link-bot.pcbot.workers.dev/sheet-action` and `ARCHIVE_TAB=Archive`, then run `installSheetActionTrigger()` once in the bridge editor.
 
 Every deployment should have a recorded commit SHA and a short smoke-test result in its pull request or release notes.
 

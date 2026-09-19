@@ -20,14 +20,15 @@ const extraction = {
 describe("Google Sheets row mapping", () => {
 	it("keeps a stable header and row order", () => {
 		const row = buildSheetRow(job, extraction, "tinyfish+gemini", "2026-09-19T12:00:00Z");
-		expect(SHEET_HEADERS).toHaveLength(12);
+		expect(SHEET_HEADERS).toHaveLength(13);
 		expect(row).toHaveLength(SHEET_HEADERS.length);
 		expect(row.slice(1, 9)).toEqual(["Launch invitation", "", "https://example.com/post", "A launch invitation.", "", "event", "", "launch, event"]);
-		expect(row[11]).toBe("hash-1");
+		expect(row[11]).toBe("");
+		expect(row[12]).toBe("hash-1");
 	});
 
 	it("finds an existing row by URL hash", () => {
-		const rows = [SHEET_HEADERS, ["old", "old title", "", "", "", "", "", "", "", "", "", "hash-old"], ["now", "title", "", "", "", "", "", "", "", "", "", "hash-1"]];
+		const rows = [SHEET_HEADERS, ["old", "old title", "", "", "", "", "", "", "", "", "", "", "hash-old"], ["now", "title", "", "", "", "", "", "", "", "", "", "", "hash-1"]];
 		expect(findExistingSheetRow(rows, "hash-1")).toBe(3);
 		expect(findExistingSheetRow(rows, "missing")).toBeNull();
 	});

@@ -1,5 +1,5 @@
 export const SHEET_HEADERS = [
-	"timestamp", "title", "original_message", "link", "summary", "user_note", "type", "deadline", "tags", "shared_by_name", "shared_by_username", "_record_key",
+	"timestamp", "title", "original_message", "link", "summary", "user_note", "type", "deadline", "tags", "shared_by_name", "shared_by_username", "action", "_record_key",
 ];
 
 export const STATUS_HEADERS = ["updated_at", "job_id", "url_hash", "source_url", "status", "attempt_count", "provider", "message", "main_row_number"];
@@ -31,11 +31,11 @@ async function signPayload(payload, secret) {
 
 export function buildSheetRow(job, extraction, provider, processedAt = new Date().toISOString()) {
 	const tags = extraction.tags?.length ? extraction.tags : extraction.hashtags.map((tag) => tag.replace(/^#+/, "").toLowerCase());
-	return [job.created_at ?? processedAt, extraction.title ?? extraction.event?.name ?? "Untitled", job.original_message ?? "", job.normalized_url, extraction.summary, job.user_note ?? "", extraction.type ?? "other", extraction.type === "grant" ? extraction.deadline ?? "" : "", tags.join(", "), job.sender_name ?? "", job.sender_username ? `@${String(job.sender_username).replace(/^@/, "")}` : "", job.url_hash];
+	return [job.created_at ?? processedAt, extraction.title ?? extraction.event?.name ?? "Untitled", job.original_message ?? "", job.normalized_url, extraction.summary, job.user_note ?? "", extraction.type ?? "other", extraction.type === "grant" ? extraction.deadline ?? "" : "", tags.join(", "), job.sender_name ?? "", job.sender_username ? `@${String(job.sender_username).replace(/^@/, "")}` : "", "", job.url_hash];
 }
 
 export function findExistingSheetRow(rows, urlHash) {
-	for (let index = 1; index < rows.length; index += 1) if (rows[index]?.[11] === urlHash) return index + 1;
+	for (let index = 1; index < rows.length; index += 1) if (rows[index]?.[12] === urlHash) return index + 1;
 	return null;
 }
 

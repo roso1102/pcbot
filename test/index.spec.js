@@ -17,7 +17,7 @@ class FakeD1 {
 					if (sql.includes("INSERT OR IGNORE INTO jobs")) {
 						const [id, updateId, urlIndex, chatId, messageId, originalUrl, normalizedUrl, urlHash] = values;
 						if ([...this.jobs.values()].some((job) => job.url_hash === urlHash || (job.telegram_update_id === updateId && job.url_index === urlIndex))) return { meta: { changes: 0 } };
-						this.jobs.set(id, { id, telegram_update_id: updateId, url_index: urlIndex, chat_id: chatId, message_id: messageId, original_url: originalUrl, normalized_url: normalizedUrl, url_hash: urlHash, status: "queued" });
+						this.jobs.set(id, { id, telegram_update_id: updateId, url_index: urlIndex, chat_id: chatId, message_id: messageId, original_url: originalUrl, normalized_url: normalizedUrl, url_hash: urlHash, status: "queued", record_state: "active" });
 						return { meta: { changes: 1 } };
 					}
 					if (sql.includes("INSERT INTO errors")) {
@@ -27,9 +27,9 @@ class FakeD1 {
 					throw new Error(`Unhandled fake SQL: ${sql}`);
 				},
 				first: async () => {
-					if (sql.includes("SELECT id, status FROM jobs WHERE url_hash")) {
+					if (sql.includes("SELECT id, status, record_state FROM jobs WHERE url_hash")) {
 						const job = [...this.jobs.values()].find((item) => item.url_hash === values[0]);
-						return job ? { id: job.id, status: job.status } : null;
+						return job ? { id: job.id, status: job.status, record_state: job.record_state } : null;
 					}
 					return null;
 				},

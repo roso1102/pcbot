@@ -140,7 +140,7 @@ These are non-negotiable until the migration has passed:
 - [ ] Do not point the production Telegram webhook at the Worker before phases 1–10 pass.
 - [ ] Do not test the production Sheet until idempotency is implemented; use a test Sheet target. Do not configure Calendar yet.
 
-The local Sheets implementation is in `src/google-sheets.js`, and the separate Apps Script bridge template is in `google-sheets-bridge/Code.gs`. Apply all pending migrations, including `0003_user_metadata.sql`, before deploying it. Set Apps Script properties `SHEET_TAB=Links`, `STATUS_TAB=Status`, and `FAILURES_TAB=Failures`. The bridge stores the Sheet ID and shared secret in Apps Script properties, writes the compact main data tab, automatically creates the two support tabs, and preserves a legacy wide `Sheet1` when detected. The Worker stores only the bridge URL and matching secret.
+The local Sheets implementation is in `src/google-sheets.js`, and the separate Apps Script bridge template is in `google-sheets-bridge/Code.gs`. Apply all pending migrations, including `0004_lifecycle_actions.sql`, before deploying it. Set Apps Script properties `SHEET_TAB=Links`, `STATUS_TAB=Status`, `FAILURES_TAB=Failures`, `ARCHIVE_TAB=Archive`, and `WORKER_ACTION_URL=https://telegram-link-bot.pcbot.workers.dev/sheet-action`. The bridge stores the Sheet ID and shared secret in Apps Script properties, writes the compact main data tab, automatically creates the two support tabs, preserves a legacy wide `Sheet1` when detected, and runs the installable `handleSheetActionEdit` trigger after `installSheetActionTrigger()` is run once. The Worker stores only the bridge URL and matching secret.
 - [ ] Do not perform page/model/Google work synchronously in the Telegram webhook.
 - [ ] Do not acknowledge durable acceptance before the D1/Queue handoff has succeeded or is recoverable.
 - [ ] Do not assume exactly-once Queue delivery; every downstream operation must be idempotent.
@@ -156,6 +156,7 @@ The local Sheets implementation is in `src/google-sheets.js`, and the separate A
 - [ ] Confirm TinyFish bounded retry behavior and Firecrawl fallback behavior when enabled.
 - [ ] Confirm Gemini schema validation blocks malformed output.
 - [ ] Confirm Google writes reconcile correctly after partial failure.
+- [ ] Confirm Sheet `Archive` and `Delete` actions update D1 before changing the visible row.
 - [ ] Confirm status messages are useful and do not expose internals.
 - [ ] Review production logs for redaction.
 - [ ] Obtain explicit cutover approval.

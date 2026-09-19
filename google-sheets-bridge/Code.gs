@@ -1,4 +1,7 @@
 const HEADERS = [
+  'timestamp', 'title', 'original_message', 'link', 'summary', 'user_note', 'type', 'deadline', 'tags', 'shared_by_name', 'shared_by_username', 'action', '_record_key',
+];
+const LEGACY_HEADERS = [
   'timestamp', 'title', 'original_message', 'link', 'summary', 'user_note', 'type', 'deadline', 'tags', 'shared_by_name', 'shared_by_username', '_record_key',
 ];
 const STATUS_HEADERS = ['updated_at', 'job_id', 'url_hash', 'source_url', 'status', 'attempt_count', 'provider', 'message', 'main_row_number'];
@@ -34,11 +37,12 @@ function doPost(e) {
 function saveMain_(spreadsheet, tabName, payload) {
   if (typeof payload.urlHash !== 'string' || payload.row.length !== HEADERS.length) return json_({ ok: false, error: 'invalid_main_payload' });
   const sheet = getMainSheet_(spreadsheet, tabName);
+  migrateMainSchema_(sheet);
   ensureHeader_(sheet, HEADERS);
   formatMainSheet_(sheet);
   const lastRow = sheet.getLastRow();
   if (lastRow >= 2) {
-    const keys = sheet.getRange(2, 12, lastRow - 1, 1).getValues();
+    const keys = sheet.getRange(2, 13, lastRow - 1, 1).getValues();
     for (let index = 0; index < keys.length; index += 1) if (String(keys[index][0]) === payload.urlHash) return json_({ ok: true, status: 'already_saved', rowNumber: index + 2 });
   }
   sheet.appendRow(payload.row);
@@ -80,6 +84,13 @@ function getMainSheet_(spreadsheet, requestedName) {
   return existing || spreadsheet.insertSheet(requestedName);
 }
 
+function migrateMainSchema_(sheet) {
+  if (headerMatches_(sheet, LEGACY_HEADERS)) {
+    sheet.insertColumnBefore(12);
+    sheet.getRange(1, 12).setValue('action');
+  }
+}
+
 function findValueRow_(sheet, column, value) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return null;
@@ -103,11 +114,11 @@ function headerMatches_(sheet, headers) {
 
 function formatMainSheet_(sheet) {
   sheet.setFrozenRows(1);
-  sheet.hideColumns(12);
+  sheet.hideColumns(13);
   const header = sheet.getRange(1, 1, 1, HEADERS.length);
   header.setFontWeight('bold').setFontColor('#ffffff').setBackground('#1f4e78').setVerticalAlignment('middle');
   sheet.setRowHeight(1, 30);
-  sheet.setColumnWidths(1, 11, 150);
+  sheet.setColumnWidths(1, 12, 150);
   [2, 3, 5, 6, 9].forEach((column) => sheet.getRange(1, column, Math.max(sheet.getLastRow(), 1), 1).setWrap(true));
   sheet.setColumnWidth(2, 230);
   sheet.setColumnWidth(3, 320);
@@ -119,9 +130,12 @@ function formatMainSheet_(sheet) {
   sheet.setColumnWidth(9, 240);
   sheet.setColumnWidth(10, 180);
   sheet.setColumnWidth(11, 160);
+  sheet.setColumnWidth(12, 110);
+  const actionRule = SpreadsheetApp.newDataValidation().requireValueInList(['Keep', 'Archive', 'Delete'], true).setAllowInvalid(false).build();
+  sheet.getRange(2, 12, Math.max(sheet.getMaxRows() - 1, 1), 1).setDataValidation(actionRule);
   const filter = sheet.getFilter();
   if (filter) filter.remove();
-  sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 1), 11).createFilter();
+  sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 1), 12).createFilter();
 }
 
 function formatSupportSheet_(sheet, headers) {
@@ -152,6 +166,77 @@ function constantTimeEqual_(left, right) {
   let difference = 0;
   for (let index = 0; index < left.length; index += 1) difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
   return difference === 0;
+}
+
+// Run installSheetActionTrigger once from the Apps Script editor. The trigger
+// lets the Sheet act as the safe delete/archive control surface.
+function installSheetActionTrigger() {
+  const properties = PropertiesService.getScriptProperties();
+  const spreadsheetId = properties.getProperty('SPREADSHEET_ID');
+  if (!spreadsheetId) throw new Error('Set SPREADSHEET_ID before installing the trigger.');
+  const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+  const tabName = properties.getProperty('SHEET_TAB') || 'Links';
+  const sheet = getMainSheet_(spreadsheet, tabName);
+  migrateMainSchema_(sheet);
+  ensureHeader_(sheet, HEADERS);
+  formatMainSheet_(sheet);
+  ScriptApp.getProjectTriggers().forEach((trigger) => {
+    if (trigger.getHandlerFunction() === 'handleSheetActionEdit') ScriptApp.deleteTrigger(trigger);
+  });
+  ScriptApp.newTrigger('handleSheetActionEdit').forSpreadsheet(spreadsheetId).onEdit().create();
+}
+
+function handleSheetActionEdit(e) {
+  if (!e || !e.range || e.range.getRow() < 2 || e.range.getColumn() !== 12 || e.range.getNumRows() !== 1 || e.range.getNumColumns() !== 1) return;
+  const properties = PropertiesService.getScriptProperties();
+  const spreadsheet = e.range.getSheet().getParent();
+  const tabName = properties.getProperty('SHEET_TAB') || 'Links';
+  if (e.range.getSheet().getName() !== tabName) return;
+  const action = String(e.value || '').trim().toLowerCase();
+  if (!['archive', 'delete'].includes(action)) return;
+  const rowNumber = e.range.getRow();
+  const recordKey = String(e.range.getSheet().getRange(rowNumber, 13).getValue() || '').trim();
+  const workerUrl = properties.getProperty('WORKER_ACTION_URL');
+  const secret = (properties.getProperty('BRIDGE_SHARED_SECRET') || '').trim();
+  if (!workerUrl || !secret || !/^[a-f0-9]{64}$/i.test(recordKey)) {
+    e.range.setValue('Error');
+    spreadsheet.toast('Missing Worker action settings or record key.');
+    return;
+  }
+  try {
+    const response = callWorkerAction_(workerUrl, secret, {
+      action: action,
+      recordKey: recordKey,
+      requestedBy: Session.getEffectiveUser().getEmail() || 'sheet-user',
+    });
+    if (!response.ok) throw new Error(response.error || 'Worker rejected the action.');
+    if (action === 'archive') {
+      const archiveName = properties.getProperty('ARCHIVE_TAB') || 'Archive';
+      const archive = getOrCreateSheet_(spreadsheet, archiveName);
+      ensureHeader_(archive, HEADERS);
+      archive.appendRow(e.range.getSheet().getRange(rowNumber, 1, 1, HEADERS.length).getValues()[0]);
+      formatMainSheet_(archive);
+    }
+    e.range.getSheet().deleteRow(rowNumber);
+    spreadsheet.toast(action === 'archive' ? 'Archived successfully.' : 'Deleted successfully.');
+  } catch (error) {
+    e.range.setValue('Error');
+    spreadsheet.toast(`Action failed: ${error.message || error}`);
+  }
+}
+
+function callWorkerAction_(workerUrl, secret, payload) {
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const payloadJson = JSON.stringify(payload);
+  const bytes = Utilities.computeHmacSha256Signature(timestamp + '.' + payloadJson, secret, Utilities.Charset.UTF_8);
+  const signature = Utilities.base64EncodeWebSafe(bytes).replace(/=+$/, '');
+  const response = UrlFetchApp.fetch(workerUrl, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify({ timestamp: timestamp, payload_json: payloadJson, signature: signature }),
+    muteHttpExceptions: true,
+  });
+  try { return JSON.parse(response.getContentText()); } catch { return { ok: false, error: 'invalid_worker_response' }; }
 }
 
 function json_(value) {

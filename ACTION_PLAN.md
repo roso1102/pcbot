@@ -16,7 +16,7 @@ This plan is ordered to reduce migration risk. Complete each phase's acceptance 
 - Integration audit found and fixed two blockers: TinyFish Fetch responses use `results[0].text`, and Gemini REST structured output uses `response_mime_type`/`response_schema`. The fixes are tested locally; redeploy and a disposable end-to-end job are required.
 - The summary/hashtag notification patch passes local tests and dry-run; deploy it before live verification.
 - Group UX now uses one Telegram progress message that is edited through queued, reading, extracting, and final states. Telegram draft streaming remains private-chat-only; this staged edit flow is the group-compatible behavior.
-- Google Sheets persistence is implemented locally: a stable 18-column row, URL-hash idempotency check, D1 row-number tracking, and Telegram row-number reporting. Remote migration, credentials, deployment, and a live Sheet test remain.
+- Google Sheets persistence is implemented locally: a compact Links row, URL-hash idempotency check, D1 row-number tracking, and Telegram row-number reporting. The Links Action dropdown now supports signed Archive/Delete synchronization with D1.
 - The bridge now maintains a main data tab plus automatically created `Status` and `Failures` tabs. Status is upserted per job; failure records are deduplicated by job/attempt/code.
 - Next: verify extracted `result_json`, test duplicates/rate limits/blocked pages and DLQ behavior, then complete Google Sheets persistence. Calendar/reminder integration is deferred until the Sheet workflow is reliable.
 
