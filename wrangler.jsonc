@@ -10,7 +10,31 @@
 	"observability": {
 		"enabled": true
 	},
-	"upload_source_maps": true
+	"upload_source_maps": true,
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "telegram-link-bot-db",
+			"database_id": "ff71f2d7-cd58-4122-aa9e-ef24c65c5733"
+		}
+	],
+	"queues": {
+		"producers": [
+			{
+				"binding": "JOBS_QUEUE",
+				"queue": "telegram-link-jobs"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "telegram-link-jobs",
+				"max_batch_size": 10,
+				"max_batch_timeout": 5,
+				"max_retries": 3,
+				"dead_letter_queue": "telegram-link-jobs-dlq"
+			}
+		]
+	}
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
