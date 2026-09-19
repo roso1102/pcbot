@@ -21,7 +21,9 @@ function mockFetch(payload, status = 200) {
 		expect(url).toBe("https://api.groq.com/openai/v1/chat/completions");
 		expect(init.headers.Authorization).toBe("Bearer groq-test");
 		const requestBody = JSON.parse(init.body);
-		expect(requestBody.response_format).toEqual({ type: "json_object" });
+		expect(requestBody.response_format.type).toBe("json_schema");
+		expect(requestBody.response_format.json_schema.strict).toBe(true);
+		expect(requestBody.response_format.json_schema.schema.properties.type.enum).toContain("competition");
 		return new Response(JSON.stringify(payload), { status });
 	};
 }

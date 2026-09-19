@@ -1,7 +1,43 @@
-import { buildExtractionPrompt, GeminiError, validateExtraction } from "./gemini";
+import { buildExtractionPrompt, CONTENT_TYPES, GeminiError, validateExtraction } from "./gemini";
 
 const DEFAULT_MODEL = "openai/gpt-oss-20b";
 const GROQ_TIMEOUT_MS = 45000;
+
+const GROQ_EXTRACTION_SCHEMA = {
+	type: "object",
+	additionalProperties: false,
+	properties: {
+		title: { type: "string" },
+		summary: { type: "string" },
+		post_body: { type: "string" },
+		hashtags: { type: "array", items: { type: "string" } },
+		tags: { type: "array", items: { type: "string" } },
+		type: { type: "string", enum: CONTENT_TYPES },
+		deadline: { type: ["string", "null"] },
+		author: { type: ["string", "null"] },
+		author_profile_url: { type: ["string", "null"] },
+		published_at: { type: ["string", "null"] },
+		event: {
+			type: ["object", "null"],
+			additionalProperties: false,
+			properties: {
+				name: { type: ["string", "null"] },
+				start_at: { type: ["string", "null"] },
+				end_at: { type: ["string", "null"] },
+				timezone: { type: ["string", "null"] },
+				location: { type: ["string", "null"] },
+				url: { type: ["string", "null"] },
+			},
+			required: ["name", "start_at", "end_at", "timezone", "location", "url"],
+		},
+		confidence_notes: { type: "string" },
+	},
+	required: ["title", "summary", "post_body", "hashtags", "tags", "type", "deadline", "author", "author_profile_url", "published_at", "event", "confidence_notes"],
+};
+
+function supportsStrictSchema(model) {
+	return model.startsWith("openai/gpt-oss-") || model.startsWith("qwen/qwen3.8-");
+}
 
 export class GroqError extends Error {
 	constructor(code, message, retryable = false, status = undefined) {
@@ -26,7 +62,7 @@ export async function extractWithGroq(sourceUrl, cleanedContent, env, fetchImpl 
 		response = await fetchImpl("https://api.groq.com/openai/v1/chat/completions", {
 			method: "POST",
 			headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.GROQ_API_KEY}` },
-			body: JSON.stringify({ model, messages: [{ role: "system", content: "You extract structured data and return JSON only." }, { role: "user", content: prompt }], temperature: 0.1, max_tokens: 2048, response_format: { type: "json_object" } }),
+			body: JSON.stringify({ model, messages: [{ role: "system", content: "You extract structured data and return JSON only." }, { role: "user", content: prompt }], temperature: 0.1, max_tokens: 2048, response_format: supportsStrictSchema(model) ? { type: "json_schema", json_schema: { name: "link_extraction", strict: true, schema: GROQ_EXTRACTION_SCHEMA } } : { type: "json_object" } }),
 			signal: controller?.signal,
 		});
 	} catch (error) {
