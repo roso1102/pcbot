@@ -15,7 +15,7 @@ class FakeActionDb {
 			bind: (...values) => ({
 				first: async () => sql.includes("SELECT id, status, record_state") ? (this.job?.url_hash === values[0] ? this.job : null) : null,
 				run: async () => {
-					if (sql.includes("UPDATE jobs SET record_state")) { this.job.record_state = "archived"; return { meta: { changes: 1 } }; }
+					if (sql.includes("UPDATE jobs SET record_state")) { this.job.record_state = sql.includes("record_state = 'active'") ? "active" : "archived"; return { meta: { changes: 1 } }; }
 					if (sql.includes("INSERT INTO job_deletions")) { this.deleted.push(values); return { meta: { changes: 1 } }; }
 					if (sql.includes("DELETE FROM jobs")) { this.job = null; return { meta: { changes: 1 } }; }
 					throw new Error(`Unhandled SQL: ${sql}`);
@@ -44,6 +44,16 @@ describe("Sheet lifecycle actions", () => {
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({ ok: true, status: "archived", jobId: "job-1" });
 		expect(db.job.record_state).toBe("archived");
+	});
+
+	it("restores an archived job without reprocessing it", async () => {
+		const db = new FakeActionDb();
+		db.job.record_state = "archived";
+		const body = await signEnvelope({ action: "restore", recordKey, requestedBy: "owner@example.com" });
+		const response = await worker.fetch(new Request("https://example.com/sheet-action", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), { DB: db, GOOGLE_SHEETS_BRIDGE_SECRET: secret });
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ ok: true, status: "restored", jobId: "job-1" });
+		expect(db.job.record_state).toBe("active");
 	});
 
 	it("rejects unsigned actions", async () => {

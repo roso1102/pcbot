@@ -132,7 +132,9 @@ function formatMainSheet_(sheet) {
   sheet.setColumnWidth(10, 180);
   sheet.setColumnWidth(11, 160);
   sheet.setColumnWidth(12, 110);
-  const actionRule = SpreadsheetApp.newDataValidation().requireValueInList(['Keep', 'Archive', 'Delete'], true).setAllowInvalid(false).build();
+  const archiveName = PropertiesService.getScriptProperties().getProperty('ARCHIVE_TAB') || 'Archive';
+  const actionOptions = sheet.getName() === archiveName ? ['Keep', 'Restore', 'Delete'] : ['Keep', 'Archive', 'Delete'];
+  const actionRule = SpreadsheetApp.newDataValidation().requireValueInList(actionOptions, true).setAllowInvalid(false).build();
   sheet.getRange(2, 12, Math.max(sheet.getMaxRows() - 1, 1), 1).setDataValidation(actionRule);
   const typeRule = SpreadsheetApp.newDataValidation().requireValueInList(TYPE_OPTIONS, true).setAllowInvalid(false).build();
   sheet.getRange(2, 7, Math.max(sheet.getMaxRows() - 1, 1), 1).setDataValidation(typeRule);
@@ -194,13 +196,17 @@ function handleSheetActionEdit(e) {
   const properties = PropertiesService.getScriptProperties();
   const spreadsheet = e.range.getSheet().getParent();
   const tabName = properties.getProperty('SHEET_TAB') || 'Links';
-  if (e.range.getSheet().getName() !== tabName) return;
+  const archiveName = properties.getProperty('ARCHIVE_TAB') || 'Archive';
+  const currentTab = e.range.getSheet().getName();
+  if (currentTab !== tabName && currentTab !== archiveName) return;
   const action = String(e.value || '').trim().toLowerCase();
-  if (!['archive', 'delete'].includes(action)) return;
+  const allowedActions = currentTab === archiveName ? ['restore', 'delete'] : ['archive', 'delete'];
+  if (!allowedActions.includes(action)) return;
   const rowNumber = e.range.getRow();
   const recordKey = String(e.range.getSheet().getRange(rowNumber, 13).getValue() || '').trim();
   const workerUrl = properties.getProperty('WORKER_ACTION_URL');
   const secret = (properties.getProperty('BRIDGE_SHARED_SECRET') || '').trim();
+  let restoreAlreadyActive = false;
   if (!workerUrl || !secret || !/^[a-f0-9]{64}$/i.test(recordKey)) {
     e.range.setValue('Error');
     spreadsheet.toast('Missing Worker action settings or record key.');
@@ -214,19 +220,34 @@ function handleSheetActionEdit(e) {
     });
     if (!response.ok) throw new Error(response.error || 'Worker rejected the action.');
     if (action === 'archive') {
-      const archiveName = properties.getProperty('ARCHIVE_TAB') || 'Archive';
       const archive = getOrCreateSheet_(spreadsheet, archiveName);
+      migrateMainSchema_(archive);
       ensureHeader_(archive, HEADERS);
-      archive.appendRow(e.range.getSheet().getRange(rowNumber, 1, 1, HEADERS.length).getValues()[0]);
+      const rowData = e.range.getSheet().getRange(rowNumber, 1, 1, HEADERS.length).getValues()[0];
+      rowData[11] = '';
+      archive.appendRow(rowData);
       formatMainSheet_(archive);
+    } else if (action === 'restore') {
+      const links = getMainSheet_(spreadsheet, tabName);
+      migrateMainSchema_(links);
+      ensureHeader_(links, HEADERS);
+      const existingRow = findValueRow_(links, 13, recordKey);
+      restoreAlreadyActive = Boolean(existingRow);
+      if (!existingRow) {
+        const rowData = e.range.getSheet().getRange(rowNumber, 1, 1, HEADERS.length).getValues()[0];
+        rowData[11] = '';
+        links.appendRow(rowData);
+        formatMainSheet_(links);
+      }
     }
     e.range.getSheet().deleteRow(rowNumber);
-    spreadsheet.toast(action === 'archive' ? 'Archived successfully.' : 'Deleted successfully.');
+    spreadsheet.toast(action === 'archive' ? 'Archived successfully.' : action === 'restore' ? (restoreAlreadyActive ? 'Already active; removed duplicate archive row.' : 'Restored successfully.') : 'Deleted successfully.');
   } catch (error) {
     e.range.setValue('Error');
     spreadsheet.toast(`Action failed: ${error.message || error}`);
   }
 }
+
 
 function callWorkerAction_(workerUrl, secret, payload) {
   const timestamp = String(Math.floor(Date.now() / 1000));

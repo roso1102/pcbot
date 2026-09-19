@@ -140,10 +140,15 @@ async function handleSheetAction(request, env) {
 	const action = String(payload?.action ?? "").trim().toLowerCase();
 	const recordKey = String(payload?.recordKey ?? "").trim();
 	const requestedBy = String(payload?.requestedBy ?? "sheet-user").slice(0, 200);
-	if (!["archive", "delete"].includes(action) || !/^[a-f0-9]{64}$/i.test(recordKey)) return json({ ok: false, error: "invalid_action" }, 400);
+	if (!["archive", "restore", "delete"].includes(action) || !/^[a-f0-9]{64}$/i.test(recordKey)) return json({ ok: false, error: "invalid_action" }, 400);
 	const job = await env.DB.prepare("SELECT id, status, record_state, normalized_url, url_hash, result_json FROM jobs WHERE url_hash = ?").bind(recordKey).first();
 	if (!job) return json({ ok: false, error: "job_not_found" }, 404);
 	if (job.status === "processing" || job.status === "queued") return json({ ok: false, error: "job_in_progress" }, 409);
+	if (action === "restore") {
+		if (job.record_state !== "archived") return json({ ok: true, status: "already_active", jobId: job.id });
+		await env.DB.prepare("UPDATE jobs SET record_state = 'active', state_changed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(job.id).run();
+		return json({ ok: true, status: "restored", jobId: job.id });
+	}
 	if (action === "archive") {
 		await env.DB.prepare("UPDATE jobs SET record_state = 'archived', state_changed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(job.id).run();
 		return json({ ok: true, status: "archived", jobId: job.id });
