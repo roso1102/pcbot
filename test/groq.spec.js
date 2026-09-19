@@ -46,6 +46,22 @@ describe("Groq fallback extraction", () => {
 		expect(result.type).toBe("event");
 	});
 
+	it("falls back to JSON Object Mode when strict generation fails", async () => {
+		let callCount = 0;
+		const result = await extractWithGroq("https://example.com", "post text", { GROQ_API_KEY: "groq-test", GROQ_MODEL: "openai/gpt-oss-120b" }, async (_url, init) => {
+			callCount += 1;
+			const requestBody = JSON.parse(init.body);
+			if (callCount === 1) {
+				expect(requestBody.response_format.type).toBe("json_schema");
+				return new Response(JSON.stringify({ error: { message: "Failed to generate JSON. Please adjust your prompt." } }), { status: 400 });
+			}
+			expect(requestBody.response_format).toEqual({ type: "json_object" });
+			return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(extraction) } }] }), { status: 200 });
+		});
+		expect(result.title).toBe("Launch invitation");
+		expect(callCount).toBe(2);
+	});
+
 	it("bounds very long fallback payloads while preserving the tail", () => {
 		const result = trimForGroq(`${"A".repeat(60_000)}DEADLINE 30 November 2026`);
 		expect(result.length).toBeLessThanOrEqual(40_000 + 100);

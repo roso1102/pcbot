@@ -68,35 +68,47 @@ export async function extractWithGroq(sourceUrl, cleanedContent, env, fetchImpl 
 	const model = env.GROQ_MODEL || DEFAULT_MODEL;
 	const boundedContent = trimForGroq(cleanedContent);
 	const prompt = buildExtractionPrompt(sourceUrl, boundedContent) + "\nReturn only one valid JSON object. Do not include markdown fences. Include every requested field; use null for missing nullable fields and [] for missing arrays.";
-	let response;
-	let timeoutId;
-	const controller = typeof AbortController === "function" ? new AbortController() : null;
-	try {
-		if (controller) timeoutId = setTimeout(() => controller.abort(), GROQ_TIMEOUT_MS);
-		response = await fetchImpl("https://api.groq.com/openai/v1/chat/completions", {
-			method: "POST",
-			headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.GROQ_API_KEY}` },
-			body: JSON.stringify({ model, messages: [{ role: "system", content: "You extract structured data and return JSON only." }, { role: "user", content: prompt }], temperature: 0, max_completion_tokens: 2048, response_format: supportsStrictSchema(model) ? { type: "json_schema", json_schema: { name: "link_extraction", strict: true, schema: GROQ_EXTRACTION_SCHEMA } } : { type: "json_object" } }),
-			signal: controller?.signal,
-		});
-	} catch (error) {
-		const timedOut = error?.name === "AbortError";
-		throw new GroqError(timedOut ? "timeout" : "network_error", timedOut ? "Groq request timed out" : (error?.message ?? "Groq request failed"), true);
-	} finally {
-		if (timeoutId) clearTimeout(timeoutId);
-	}
-	if (!response.ok) {
-		let providerMessage = "";
+	const strict = supportsStrictSchema(model);
+	const requestCompletion = async (responseFormat) => {
+		let response;
+		let timeoutId;
+		const controller = typeof AbortController === "function" ? new AbortController() : null;
 		try {
-			const errorPayload = await response.clone().json();
-			providerMessage = typeof errorPayload?.error?.message === "string" ? errorPayload.error.message.slice(0, 300) : "";
-		} catch {
-			// Keep the status code as the stable diagnostic when the provider body is not JSON.
+			if (controller) timeoutId = setTimeout(() => controller.abort(), GROQ_TIMEOUT_MS);
+			response = await fetchImpl("https://api.groq.com/openai/v1/chat/completions", {
+				method: "POST",
+				headers: { "Content-Type": "application/json", Authorization: `Bearer ${env.GROQ_API_KEY}` },
+				body: JSON.stringify({ model, messages: [{ role: "system", content: "You extract structured data and return JSON only." }, { role: "user", content: prompt }], temperature: 0, max_completion_tokens: 2048, response_format: responseFormat }),
+				signal: controller?.signal,
+			});
+		} catch (error) {
+			const timedOut = error?.name === "AbortError";
+			throw new GroqError(timedOut ? "timeout" : "network_error", timedOut ? "Groq request timed out" : (error?.message ?? "Groq request failed"), true);
+		} finally {
+			if (timeoutId) clearTimeout(timeoutId);
 		}
-		throw new GroqError(`groq_http_${response.status}`, `Groq returned HTTP ${response.status} for ${model} (${boundedContent.length} input chars)${providerMessage ? `: ${providerMessage}` : ""}`, [408, 425, 429, 500, 502, 503, 504].includes(response.status), response.status);
-	}
+		if (!response.ok) {
+			let providerMessage = "";
+			try {
+				const errorPayload = await response.clone().json();
+				providerMessage = typeof errorPayload?.error?.message === "string" ? errorPayload.error.message.slice(0, 300) : "";
+			} catch {
+				// Keep the status code as the stable diagnostic when the provider body is not JSON.
+			}
+			throw new GroqError(`groq_http_${response.status}`, `Groq returned HTTP ${response.status} for ${model} (${boundedContent.length} input chars)${providerMessage ? `: ${providerMessage}` : ""}`, [408, 425, 429, 500, 502, 503, 504].includes(response.status), response.status);
+		}
+		try { return await response.json(); } catch { throw new GroqError("invalid_json", "Groq returned invalid JSON"); }
+	};
 	let payload;
-	try { payload = await response.json(); } catch { throw new GroqError("invalid_json", "Groq returned invalid JSON"); }
+	try {
+		payload = await requestCompletion(strict ? { type: "json_schema", json_schema: { name: "link_extraction", strict: true, schema: GROQ_EXTRACTION_SCHEMA } } : { type: "json_object" });
+	} catch (error) {
+		// Groq can reject an otherwise valid strict schema when the model cannot
+		// complete constrained generation for a particular page. Retry once in
+		// JSON Object Mode, then apply our own schema validation below.
+		if (!strict || error.status !== 400 || !/failed to (generate|validate) json/i.test(error.message ?? "")) throw error;
+		payload = await requestCompletion({ type: "json_object" });
+	}
 	const text = payload?.choices?.[0]?.message?.content ?? "";
 	try {
 		return validateExtraction(JSON.parse(text));
