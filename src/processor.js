@@ -12,30 +12,39 @@ async function recordError(db, jobId, error) {
 }
 
 export function formatSuccessMessage(url, extraction, sheetResult = null, extractor = "gemini") {
-	const tags = extraction.tags?.length ? extraction.tags.map((tag) => `#${tag}`).join(" ") : (extraction.hashtags.length ? extraction.hashtags.join(" ") : "none");
-	const lines = ["✅ Processed successfully", `Title: ${extraction.title}`, `Summary: ${extraction.summary}`, `Tags: ${tags}`, `Type: ${extraction.type}`];
-	lines.push(`Extractor: ${extractor}`);
-	if (extraction.author) lines.push(`Author: ${extraction.author}`);
-	if (extraction.published_at) lines.push(`Date: ${extraction.published_at}`);
-	if (extraction.event?.name) lines.push(`Event: ${extraction.event.name}`);
-	if (sheetResult?.status === "saved" && sheetResult.rowNumber) lines.push(`Sheet row: ${sheetResult.rowNumber}`);
-	lines.push(`Source: ${url}`);
+	const escapeHtml = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+	const lines = [
+		"✅ <b>Processed successfully</b>",
+		"",
+		`<b>Title</b>\n${escapeHtml(extraction.title)}`,
+		"",
+		`<b>Summary</b>\n${escapeHtml(extraction.summary)}`,
+		"",
+		`<b>Type</b>: ${escapeHtml(extraction.type)}`,
+		`<b>Extractor</b>: ${escapeHtml(extractor)}`,
+	];
+	if (extraction.author) lines.push(`<b>Author</b>: ${escapeHtml(extraction.author)}`);
+	if (extraction.published_at) lines.push(`<b>Published</b>: ${escapeHtml(extraction.published_at)}`);
+	if (extraction.deadline) lines.push(`<b>Deadline</b>: ${escapeHtml(extraction.deadline)}`);
+	if (extraction.event?.name) lines.push(`<b>Event</b>: ${escapeHtml(extraction.event.name)}`);
+	if (sheetResult?.status === "saved" && sheetResult.rowNumber) lines.push(`<b>Sheet row</b>: ${escapeHtml(sheetResult.rowNumber)}`);
+	lines.push("", `<b>Source</b>: <a href="${escapeHtml(url)}">Open link</a>`);
 	return lines.join("\n");
 }
 
-async function updateProgress(job, messageId, text, env, fetchImpl) {
+async function updateProgress(job, messageId, text, env, fetchImpl, parseMode = null) {
 	if (messageId === null || messageId === undefined) return false;
 	try {
-		const result = await editTelegramMessage(job.chat_id, messageId, text, env, fetchImpl);
+		const result = await editTelegramMessage(job.chat_id, messageId, text, env, fetchImpl, parseMode);
 		return !result.skipped;
 	} catch {
 		return false;
 	}
 }
 
-async function sendOrEditProgress(job, messageId, text, env, fetchImpl) {
-	if (await updateProgress(job, messageId, text, env, fetchImpl)) return;
-	await sendTelegramMessage(job.chat_id, text, env, fetchImpl);
+async function sendOrEditProgress(job, messageId, text, env, fetchImpl, parseMode = null) {
+	if (await updateProgress(job, messageId, text, env, fetchImpl, parseMode)) return;
+	await sendTelegramMessage(job.chat_id, text, env, fetchImpl, parseMode);
 }
 
 function sheetsConfigured(env) {
@@ -109,7 +118,7 @@ export async function processQueueMessage(message, env, fetchImpl = fetch) {
 			await env.DB.prepare("UPDATE jobs SET status = 'completed', provider = ?, result_json = ?, updated_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP WHERE id = ?").bind(provider, result, job.id).run();
 		}
 		await updateSheetStatus(job, "completed", provider, "Saved successfully", env, fetchImpl, sheetResult.rowNumber ?? null);
-		try { await sendOrEditProgress(job, body.progressMessageId, formatSuccessMessage(job.normalized_url, extraction, sheetResult, extractor), env, fetchImpl); } catch (notificationError) { notificationError.stage = "telegram"; await recordError(env.DB, job.id, notificationError); }
+		try { await sendOrEditProgress(job, body.progressMessageId, formatSuccessMessage(job.normalized_url, extraction, sheetResult, extractor), env, fetchImpl, "HTML"); } catch (notificationError) { notificationError.stage = "telegram"; await recordError(env.DB, job.id, notificationError); }
 		message.ack();
 	} catch (error) {
 		const attemptNumber = (job.attempt_count ?? 0) + 1;

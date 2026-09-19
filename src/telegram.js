@@ -26,14 +26,18 @@ async function callTelegram(method, payload, env, fetchImpl = fetch) {
 	return { skipped: false, result: data?.result };
 }
 
-export async function sendTelegramMessage(chatId, text, env, fetchImpl = fetch) {
-	const response = await callTelegram("sendMessage", { chat_id: chatId, text: String(text).slice(0, 4096), disable_web_page_preview: true }, env, fetchImpl);
+export async function sendTelegramMessage(chatId, text, env, fetchImpl = fetch, parseMode = null) {
+	const payload = { chat_id: chatId, text: String(text).slice(0, 4096), disable_web_page_preview: true };
+	if (parseMode) payload.parse_mode = parseMode;
+	const response = await callTelegram("sendMessage", payload, env, fetchImpl);
 	return { ...response, messageId: response.result?.message_id ?? null };
 }
 
-export async function editTelegramMessage(chatId, messageId, text, env, fetchImpl = fetch) {
+export async function editTelegramMessage(chatId, messageId, text, env, fetchImpl = fetch, parseMode = null) {
 	if (messageId === null || messageId === undefined) return { skipped: true };
-	return callTelegram("editMessageText", { chat_id: chatId, message_id: messageId, text: String(text).slice(0, 4096), disable_web_page_preview: true }, env, fetchImpl);
+	const payload = { chat_id: chatId, message_id: messageId, text: String(text).slice(0, 4096), disable_web_page_preview: true };
+	if (parseMode) payload.parse_mode = parseMode;
+	return callTelegram("editMessageText", payload, env, fetchImpl);
 }
 
 export async function sendTelegramChatAction(chatId, env, fetchImpl = fetch) {
