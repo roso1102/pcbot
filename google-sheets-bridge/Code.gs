@@ -185,6 +185,13 @@ function installSheetActionTrigger() {
   migrateMainSchema_(sheet);
   ensureHeader_(sheet, HEADERS);
   formatMainSheet_(sheet);
+  const archiveName = properties.getProperty('ARCHIVE_TAB') || 'Archive';
+  const archive = spreadsheet.getSheetByName(archiveName);
+  if (archive) {
+    migrateMainSchema_(archive);
+    ensureHeader_(archive, HEADERS);
+    formatMainSheet_(archive);
+  }
   ScriptApp.getProjectTriggers().forEach((trigger) => {
     if (trigger.getHandlerFunction() === 'handleSheetActionEdit') ScriptApp.deleteTrigger(trigger);
   });
