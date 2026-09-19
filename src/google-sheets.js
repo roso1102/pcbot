@@ -31,7 +31,7 @@ async function signPayload(payload, secret) {
 
 export function buildSheetRow(job, extraction, provider, processedAt = new Date().toISOString()) {
 	const tags = extraction.tags?.length ? extraction.tags : extraction.hashtags.map((tag) => tag.replace(/^#+/, "").toLowerCase());
-	return [job.created_at ?? processedAt, extraction.title ?? extraction.event?.name ?? "Untitled", job.original_message ?? "", job.normalized_url, extraction.summary, job.user_note ?? "", extraction.type ?? "other", extraction.type === "grant" ? extraction.deadline ?? "" : "", tags.join(", "), job.sender_name ?? "", job.sender_username ? `@${String(job.sender_username).replace(/^@/, "")}` : "", "", job.url_hash];
+	return [job.created_at ?? processedAt, extraction.title ?? extraction.event?.name ?? "Untitled", job.original_message ?? "", job.normalized_url, extraction.summary, job.user_note ?? "", extraction.type ?? "other", extraction.deadline ?? "", tags.join(", "), job.sender_name ?? "", job.sender_username ? `@${String(job.sender_username).replace(/^@/, "")}` : "", "", job.url_hash];
 }
 
 export function findExistingSheetRow(rows, urlHash) {

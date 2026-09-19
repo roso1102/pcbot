@@ -32,4 +32,10 @@ describe("Google Sheets row mapping", () => {
 		expect(findExistingSheetRow(rows, "hash-1")).toBe(3);
 		expect(findExistingSheetRow(rows, "missing")).toBeNull();
 	});
+
+	it("writes deadlines for any classified type", () => {
+		const row = buildSheetRow(job, { ...extraction, type: "competition", deadline: "2026-11-30" }, "tinyfish+gemini");
+		expect(row[6]).toBe("competition");
+		expect(row[7]).toBe("2026-11-30");
+	});
 });

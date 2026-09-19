@@ -45,6 +45,13 @@ describe("Gemini extraction", () => {
 		await expect(extractWithGemini("https://example.com", "text", { GEMINI_API_KEY: "gemini-test" }, mockFetch({}, 429))).rejects.toMatchObject({ code: "gemini_http_429", retryable: true });
 	});
 
+	it("accepts competition classification and a deadline", async () => {
+		const competition = { ...extraction, type: "competition", deadline: "2026-11-30" };
+		const result = await extractWithGemini("https://example.com", "Competition closes 30 November 2026", { GEMINI_API_KEY: "gemini-test" }, mockFetch({ candidates: [{ content: { parts: [{ text: JSON.stringify(competition) }] } }] }));
+		expect(result.type).toBe("competition");
+		expect(result.deadline).toBe("2026-11-30");
+	});
+
 	it("does not retry an exhausted quota", async () => {
 		const quotaResponse = { error: { message: "You exceeded your current quota, please check your plan and billing details." } };
 		await expect(extractWithGemini("https://example.com", "text", { GEMINI_API_KEY: "gemini-test" }, mockFetch(quotaResponse, 429))).rejects.toMatchObject({ code: "gemini_http_429", retryable: false });
