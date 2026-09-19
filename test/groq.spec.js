@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractWithGroq } from "../src/groq";
+import { extractWithGroq, trimForGroq } from "../src/groq";
 
 const extraction = {
 	title: "Launch invitation",
@@ -30,12 +30,29 @@ function mockFetch(payload, status = 200) {
 
 describe("Groq fallback extraction", () => {
 	it("parses the same structured extraction shape", async () => {
-		const result = await extractWithGroq("https://example.com", "post text", { GROQ_API_KEY: "groq-test" }, mockFetch({ choices: [{ message: { content: JSON.stringify(extraction) } }] }));
+		const result = await extractWithGroq("https://example.com", "post text", { GROQ_API_KEY: "groq-test", GROQ_MODEL: "openai/gpt-oss-20b" }, mockFetch({ choices: [{ message: { content: JSON.stringify(extraction) } }] }));
 		expect(result.title).toBe("Launch invitation");
 		expect(result.tags).toEqual(["launch", "event"]);
 	});
 
+	it("uses JSON Object Mode for the requested Llama model", async () => {
+		let requestBody;
+		const result = await extractWithGroq("https://example.com", "post text", { GROQ_API_KEY: "groq-test", GROQ_MODEL: "llama-3.1-8b-instant" }, async (_url, init) => {
+			requestBody = JSON.parse(init.body);
+			return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(extraction) } }] }), { status: 200 });
+		});
+		expect(requestBody.response_format).toEqual({ type: "json_object" });
+		expect(requestBody.max_completion_tokens).toBe(2048);
+		expect(result.type).toBe("event");
+	});
+
+	it("bounds very long fallback payloads while preserving the tail", () => {
+		const result = trimForGroq(`${"A".repeat(60_000)}DEADLINE 30 November 2026`);
+		expect(result.length).toBeLessThanOrEqual(40_000 + 100);
+		expect(result).toContain("DEADLINE 30 November 2026");
+	});
+
 	it("marks provider rate limits as retryable", async () => {
-		await expect(extractWithGroq("https://example.com", "post text", { GROQ_API_KEY: "groq-test" }, mockFetch({}, 429))).rejects.toMatchObject({ code: "groq_http_429", retryable: true });
+		await expect(extractWithGroq("https://example.com", "post text", { GROQ_API_KEY: "groq-test", GROQ_MODEL: "openai/gpt-oss-20b" }, mockFetch({}, 429))).rejects.toMatchObject({ code: "groq_http_429", retryable: true });
 	});
 });

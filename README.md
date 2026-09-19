@@ -102,7 +102,7 @@ Use bindings for Cloudflare resources and secrets for credentials. Names below a
 | Firecrawl authorization | `FIRECRAWL_API_KEY` | Optional secret; disabled when absent |
 | Gemini authorization | `GEMINI_API_KEY` | Secret |
 | Groq fallback authorization | `GROQ_API_KEY` | Optional secret; used when Gemini fails |
-| Groq fallback model | `GROQ_MODEL` | Optional variable; defaults to `openai/gpt-oss-20b` |
+| Groq fallback model | `GROQ_MODEL` | Optional variable; defaults to `llama-3.1-8b-instant` (JSON Object Mode) |
 | Sheets bridge URL | `GOOGLE_SHEETS_BRIDGE_URL` | Secret or non-secret variable |
 | Sheets bridge secret | `GOOGLE_SHEETS_BRIDGE_SECRET` | Secret |
 | Sheet action endpoint | `POST /sheet-action` | HMAC-signed Apps Script requests |
