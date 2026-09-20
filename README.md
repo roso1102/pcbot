@@ -36,7 +36,7 @@ Cloudflare Worker
    Cloudflare Queue consumer
           |
           |-- TinyFish Fetch page reader (Firecrawl optional fallback)
-          |-- Groq structured extraction (Llama 3.1 8B Instant)
+          |-- Groq structured extraction (GPT-OSS 120B)
           |-- Gemini retained only as an explicit opt-in provider
           |-- Google Sheets persistence (Links / Status / Failures / Archive)
           |-- Calendar/reminder module (future, deferred)

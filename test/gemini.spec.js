@@ -52,6 +52,12 @@ describe("Gemini extraction", () => {
 		expect(result.deadline).toBe("2026-11-30");
 	});
 
+	it("accepts website classification for homepage content", async () => {
+		const website = { ...extraction, title: "Example Intelligence", summary: "A climate intelligence company.", post_body: "The website describes climate intelligence products.", type: "website", tags: ["climate intelligence"], deadline: null, author: null, published_at: null, event: null };
+		const result = await extractWithGemini("https://example.com", "Company homepage and products", { GEMINI_API_KEY: "gemini-test" }, mockFetch({ candidates: [{ content: { parts: [{ text: JSON.stringify(website) }] } }] }));
+		expect(result.type).toBe("website");
+	});
+
 	it("does not retry an exhausted quota", async () => {
 		const quotaResponse = { error: { message: "You exceeded your current quota, please check your plan and billing details." } };
 		await expect(extractWithGemini("https://example.com", "text", { GEMINI_API_KEY: "gemini-test" }, mockFetch(quotaResponse, 429))).rejects.toMatchObject({ code: "gemini_http_429", retryable: false });

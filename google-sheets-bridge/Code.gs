@@ -6,7 +6,7 @@ const LEGACY_HEADERS = [
 ];
 const STATUS_HEADERS = ['updated_at', 'job_id', 'url_hash', 'source_url', 'status', 'attempt_count', 'provider', 'message', 'main_row_number'];
 const FAILURE_HEADERS = ['failure_key', 'recorded_at', 'job_id', 'url_hash', 'source_url', 'attempt_number', 'code', 'message', 'retryable', 'provider_status'];
-const TYPE_OPTIONS = ['grant', 'competition', 'article', 'event', 'tool', 'report', 'opportunity', 'other'];
+const TYPE_OPTIONS = ['grant', 'competition', 'article', 'event', 'tool', 'report', 'opportunity', 'website', 'other'];
 
 function doPost(e) {
   try {

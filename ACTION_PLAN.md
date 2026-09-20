@@ -274,7 +274,7 @@ Acceptance criteria:
 Implementation notes:
 
 - The main `Links` tab is initialized with these visible headers: `timestamp`, `title`, `original_message`, `link`, `summary`, `user_note`, `type`, `deadline`, `tags`, `shared_by_name`, and `shared_by_username`. A hidden `_record_key` column keeps URL-hash deduplication reliable.
-- `type` uses a controlled list: `grant`, `competition`, `article`, `event`, `tool`, `report`, `opportunity`, and `other`. `deadline` is extracted for explicit application, submission, registration, grant, or competition deadlines regardless of type.
+- `type` uses a controlled list: `grant`, `competition`, `article`, `event`, `tool`, `report`, `opportunity`, `website`, and `other`. `website` covers competitor, organization, product, and general reference homepages. `deadline` is extracted for explicit application, submission, registration, grant, or competition deadlines regardless of type.
 - The bridge checks the URL hash before append, so a Queue retry after a successful append reconciles the existing row instead of creating a duplicate.
 - D1 stores `sheet_row_number` and `sheet_synced_at` after the Sheet write.
 - `Status` and `Failures` tabs are created automatically if they do not exist; their names can be changed through Apps Script properties `STATUS_TAB` and `FAILURES_TAB`. The bridge freezes headers, adds filters, wraps long text, sizes columns, and keeps a legacy wide `Sheet1` intact when it detects the old schema.
