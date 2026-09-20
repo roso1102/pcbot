@@ -52,6 +52,34 @@ export function trimForGroq(value) {
 	return `${text.slice(0, headChars)}\n\n[...middle of page omitted for Groq payload safety...]\n\n${text.slice(-tailChars)}`;
 }
 
+function stringArray(value) {
+	if (Array.isArray(value)) return value.filter((item) => typeof item === "string");
+	if (typeof value === "string") return value.split(",").map((item) => item.trim()).filter(Boolean);
+	return [];
+}
+
+function normalizeGroqOutput(value) {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+	const title = typeof value.title === "string" ? value.title : "Untitled";
+	const summary = typeof value.summary === "string" ? value.summary : (typeof value.post_body === "string" ? value.post_body : "");
+	const postBody = typeof value.post_body === "string" ? value.post_body : summary;
+	return {
+		...value,
+		title,
+		summary,
+		post_body: postBody,
+		hashtags: stringArray(value.hashtags),
+		tags: stringArray(value.tags),
+		type: typeof value.type === "string" && value.type.trim() ? value.type : "other",
+		deadline: typeof value.deadline === "string" ? value.deadline : null,
+		author: typeof value.author === "string" ? value.author : null,
+		author_profile_url: typeof value.author_profile_url === "string" ? value.author_profile_url : null,
+		published_at: typeof value.published_at === "string" ? value.published_at : null,
+		event: value.event && typeof value.event === "object" && !Array.isArray(value.event) ? value.event : null,
+		confidence_notes: typeof value.confidence_notes === "string" ? value.confidence_notes : "Groq returned a partial extraction; missing optional fields were normalized.",
+	};
+}
+
 export class GroqError extends Error {
 	constructor(code, message, retryable = false, status = undefined) {
 		super(message);
@@ -111,9 +139,11 @@ export async function extractWithGroq(sourceUrl, cleanedContent, env, fetchImpl 
 	}
 	const text = payload?.choices?.[0]?.message?.content ?? "";
 	try {
-		return validateExtraction(JSON.parse(text));
+		const normalized = normalizeGroqOutput(JSON.parse(text));
+		if (normalized && !normalized.title && !normalized.summary && !normalized.post_body) throw new GeminiError("invalid_schema", "Groq returned no usable content fields");
+		return validateExtraction(normalized);
 	} catch (error) {
-		if (error instanceof GeminiError) throw new GroqError(error.code, error.message, false);
+		if (error instanceof GeminiError) throw new GroqError(error.code, error.message.replace(/^Gemini returned/i, "Groq returned"), false);
 		throw new GroqError("invalid_json_output", "Groq output was not valid JSON");
 	}
 }

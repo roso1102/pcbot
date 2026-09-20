@@ -62,6 +62,14 @@ describe("Groq fallback extraction", () => {
 		expect(callCount).toBe(2);
 	});
 
+	it("normalizes partial JSON Object Mode output from sparse homepages", async () => {
+		const result = await extractWithGroq("https://example.com", "homepage text", { GROQ_API_KEY: "groq-test", GROQ_MODEL: "openai/gpt-oss-120b" }, async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ title: "Example homepage", summary: "A company homepage.", type: "other" }) } }] }), { status: 200 }));
+		expect(result.title).toBe("Example homepage");
+		expect(result.post_body).toBe("A company homepage.");
+		expect(result.tags).toEqual([]);
+		expect(result.deadline).toBeNull();
+	});
+
 	it("bounds very long fallback payloads while preserving the tail", () => {
 		const result = trimForGroq(`${"A".repeat(60_000)}DEADLINE 30 November 2026`);
 		expect(result.length).toBeLessThanOrEqual(40_000 + 100);
