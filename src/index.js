@@ -138,10 +138,11 @@ async function handleSheetAction(request, env) {
 	const verification = await verifySignedSheetAction(request, env);
 	if (!verification.ok) return json({ ok: false, error: verification.error }, verification.status);
 	const payload = verification.payload;
-	const action = String(payload?.action ?? "").trim().toLowerCase();
+	const action = String(payload?.action ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
 	const recordKey = String(payload?.recordKey ?? "").trim();
 	const requestedBy = String(payload?.requestedBy ?? "sheet-user").slice(0, 200);
-	if (!["archive", "restore", "save_edits", "delete"].includes(action) || !/^[a-f0-9]{64}$/i.test(recordKey)) return json({ ok: false, error: "invalid_action" }, 400);
+	if (!["archive", "restore", "save_edits", "delete"].includes(action)) return json({ ok: false, error: "invalid_action" }, 400);
+	if (!/^[a-f0-9]{64}$/i.test(recordKey)) return json({ ok: false, error: "invalid_record_key" }, 400);
 	const job = await env.DB.prepare("SELECT id, status, record_state, normalized_url, url_hash, result_json FROM jobs WHERE url_hash = ?").bind(recordKey).first();
 	if (!job) return json({ ok: false, error: "job_not_found" }, 404);
 	if (job.status === "processing" || job.status === "queued") return json({ ok: false, error: "job_in_progress" }, 409);

@@ -220,12 +220,6 @@ function handleSheetActionEdit(e) {
     return;
   }
   try {
-    const response = callWorkerAction_(workerUrl, secret, {
-      action: action,
-      recordKey: recordKey,
-      requestedBy: Session.getEffectiveUser().getEmail() || 'sheet-user',
-    });
-    if (!response.ok) throw new Error(response.error || 'Worker rejected the action.');
     if (action === 'save edits') {
       const rowData = e.range.getSheet().getRange(rowNumber, 1, 1, HEADERS.length).getValues()[0];
       const response = callWorkerAction_(workerUrl, secret, {
@@ -246,6 +240,12 @@ function handleSheetActionEdit(e) {
       spreadsheet.toast('Edits saved to D1 JSON.');
       return;
     }
+    const response = callWorkerAction_(workerUrl, secret, {
+      action: action.replace(/[ -]+/g, '_'),
+      recordKey: recordKey,
+      requestedBy: Session.getEffectiveUser().getEmail() || 'sheet-user',
+    });
+    if (!response.ok) throw new Error(response.error || 'Worker rejected the action.');
     if (action === 'archive') {
       const archive = getOrCreateSheet_(spreadsheet, archiveName);
       migrateMainSchema_(archive);

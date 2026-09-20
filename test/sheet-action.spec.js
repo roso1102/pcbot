@@ -59,7 +59,7 @@ describe("Sheet lifecycle actions", () => {
 
 	it("saves validated Sheet edits into the canonical JSON", async () => {
 		const db = new FakeActionDb();
-		const body = await signEnvelope({ action: "save_edits", recordKey, requestedBy: "owner@example.com", fields: { title: "Edited title", summary: "Edited summary", userNote: "Review this", type: "competition", deadline: "2026-11-30", tags: "AI, Climate, #AI" } });
+		const body = await signEnvelope({ action: "save edits", recordKey, requestedBy: "owner@example.com", fields: { title: "Edited title", summary: "Edited summary", userNote: "Review this", type: "competition", deadline: "2026-11-30", tags: "AI, Climate, #AI" } });
 		const response = await worker.fetch(new Request("https://example.com/sheet-action", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), { DB: db, GOOGLE_SHEETS_BRIDGE_SECRET: secret });
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({ ok: true, status: "saved_edits", jobId: "job-1" });
