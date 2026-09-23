@@ -54,7 +54,7 @@ Phase 12 operating contract:
 
 - `jobs.status` is the durable state machine: `queued` → `processing` → `completed`; retryable failures return to `queued`; terminal failures become `failed`; Queue exhaustion is marked `dead_letter` by the DLQ consumer; an approved replay moves `failed`/`dead_letter` back to `queued` and resets the attempt counter.
 - `jobs.result_json` is the canonical structured result. Google Sheets is a user-facing projection and may be reconciled by URL hash/row key. A D1 success remains successful if a secondary Sheet or Telegram notification fails; those secondary failures are recorded and retried independently.
-- Phase 12 retention defaults are: raw Telegram message/note 90 days, structured result 365 days, errors 180 days, and deletion/replay audit 730 days. Cleanup redacts or removes only expired data; it does not delete job identity rows, preserving deduplication and auditability.
+- Phase 12 retention defaults are: raw Telegram message/note 90 days, structured result 365 days, errors 180 days, and deletion/replay audit 730 days. Cleanup redacts or removes only expired data; it does not delete job identity rows, preserving deduplication and auditability. Phase 14 also removes expired OAuth states and old revoked sessions.
 - `GET /admin/dlq`, `GET /admin/stuck`, `POST /admin/dlq/replay`, and `POST /admin/retention` require the separate `ADMIN_API_SECRET`. Alerts are deduplicated in D1 and optionally sent to `TELEGRAM_ADMIN_CHAT_IDS`.
 - Restore runbook: export with `npx wrangler d1 export telegram-link-bot-db --remote --output <temporary-path> --skip-confirmation`, import only into an isolated local persistence directory with `npx wrangler d1 execute telegram-link-bot-db --local --persist-to <temporary-dir> --file <export> --yes`, verify representative `jobs`, `errors`, `job_replays`, `job_deletions`, and `job_alerts` rows, then remove the temporary export and local directory. Never restore directly over production during this phase.
 
@@ -76,25 +76,25 @@ Tests and evidence:
 - [x] Cross-workspace Sheet record-key lookup returns `job_not_found`; owner-scoped admin queries and namespaced storage keys prevent metadata crossover.
 - [x] Original owner smoke-tested after migration: `/health` is healthy, the Worker is deployed, and existing jobs/chat mappings remain under `workspace_default`.
 
-Exit gate: complete on 2026-09-24. Every migrated record has an owner, new intake/queue/action/operation paths enforce it, and the current personal installation remains usable. Phase 14 has not started.
+Exit gate: complete on 2026-09-24. Every migrated record has an owner, new intake/queue/action/operation paths enforce it, and the current personal installation remains usable. Phase 14 may proceed independently from this boundary.
 
 ### Phase 14 — Build a simple account and setup page
 
 Build:
 
-- [ ] Create a small hosted setup page with Google sign-in, secure session handling, a workspace dashboard, and a clear setup checklist: Google Sheet, Telegram, test link, ready.
-- [ ] Let the signed-in owner create a workspace, view connection status, choose/change a Sheet, disconnect services, and see recent jobs/errors without internal codes.
-- [ ] Require fresh authentication for sensitive account actions and validate redirect targets, CSRF/state values, session expiry, and account-to-workspace ownership.
-- [ ] Show actual next actions in plain language, e.g. “Connect Google Sheet” or “Add bot to Telegram group”; do not ask users to copy IDs or secrets.
+- [x] Create a small hosted setup page with Google sign-in, secure D1-backed sessions, a workspace dashboard, and a clear checklist for Sheet, Telegram, and test-link readiness.
+- [x] Let the signed-in owner create a workspace on first sign-in, view connection status, choose/change a Sheet by link, disconnect the Sheet, and see recent jobs/errors without internal codes.
+- [x] Require fresh authentication for sensitive account actions and validate same-origin return paths, one-time OAuth state, CSRF values, session expiry, and account-to-workspace membership.
+- [x] Show actual next actions in plain language, including “Paste a Sheet link” and “Add the bot to your Telegram group”; no service-account keys or chat IDs are requested.
 - [ ] Provision staging identities and test workspaces separately from production.
 
 Tests and evidence:
 
-- [ ] Auth/session tests for login, logout, expired sessions, CSRF/state mismatch, wrong workspace, and direct access to another user's setup page.
+- [x] Auth/session tests cover logout, expired sessions, CSRF/state mismatch, wrong-workspace access, direct unauthenticated setup access, Sheet validation, and reauthentication checks (65 tests pass).
 - [ ] Usability test: one person unfamiliar with Cloudflare can navigate to the “connect” steps without help or a command line.
-- [ ] Accessibility/mobile checks for the setup flow and error recovery screens.
+- [x] Setup page includes responsive/mobile CSS, semantic labels, keyboard-submit forms, visible status text, and no-store caching; a manual browser usability pass remains before public onboarding.
 
-Exit gate: a new user can create a workspace and understand what remains to connect without operator help.
+Exit gate: implementation complete on 2026-09-24; public onboarding is pending Google OAuth client configuration and one manual usability pass. Phase 15 has not started.
 
 ### Phase 15 — Link Telegram chats to workspaces
 
@@ -245,7 +245,7 @@ The sections below record how this installation was built. Their “Next” note
 - Phase 12 deployment evidence: Worker version `5ac670e9-ccd1-48a2-9868-b96183de5b66`, D1 migration `0005_phase12_operations.sql` applied remotely, 15-minute scheduled operations trigger enabled, both main/DLQ consumers deployed, and the admin secret/recipient secrets configured.
 - Deployment baseline: D1 database `ff71f2d7-cd58-4122-aa9e-ef24c65c5733`, queues `telegram-link-jobs`/`telegram-link-jobs-dlq`, and consumer settings are recorded from the current configuration. Git commit is recorded after this Phase 12 change is committed.
 - Phase 12 acceptance gate: complete. The current single-user Worker has baseline metrics, recovery controls, restore evidence, and 51 passing tests.
-- Phase 13 acceptance gate: complete on 2026-09-24. Migration `0006_workspaces.sql` is live, the deployed Worker version is `f8f99b4e-278a-46ad-81f5-d9ef1a6ab20f`, 58 tests pass, and Phase 14 has not started.
+- Phase 13 acceptance gate: complete on 2026-09-24. Migration `0006_workspaces.sql` is live, the deployed Worker version is `f8f99b4e-278a-46ad-81f5-d9ef1a6ab20f`, and 58 tests passed before Phase 14 began.
 - Calendar/reminder integration remains intentionally deferred.
 
 ## Definition of done

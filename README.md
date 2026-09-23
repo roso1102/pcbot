@@ -15,9 +15,9 @@ A Cloudflare Workers Telegram bot that accepts URLs, rejects duplicate submissio
 - Cloudflare Queues: main and dead-letter queues created
 - Existing Apps Script bot: code remains untouched for rollback, but its webhook is no longer active
 - Intended GitHub repository: <https://github.com/roso1102/pcbot.git>
-- Current phase: Phase 13 workspace ownership complete; Phase 14 hosted setup work has not started
+- Current phase: Phase 14 setup foundation deployed; Google OAuth configuration and manual onboarding test remain
 
-Phases 1–12 passed the single-user migration and hardening gates. Phase 13 now adds additive workspace ownership: existing data is assigned to `workspace_default`, Telegram chats resolve to registered workspaces, and URL/update uniqueness is scoped per workspace. Phase 14 hosted setup work remains untouched. See [ACTION_PLAN.md](./ACTION_PLAN.md) for the phase gate and [HANDOFF.md](./HANDOFF.md) for the continuation point.
+Phases 1–12 passed the single-user migration and hardening gates. Phase 13 added additive workspace ownership. Phase 14 now provides a hosted `/setup` page, Google OAuth flow, D1-backed sessions, CSRF/fresh-auth checks, workspace dashboard, and Sheet connection controls. Add Google OAuth credentials before using sign-in; Telegram linking remains Phase 15. See [ACTION_PLAN.md](./ACTION_PLAN.md) for the phase gate and [HANDOFF.md](./HANDOFF.md) for the continuation point.
 
 ## Target architecture
 
@@ -148,6 +148,24 @@ npm run deploy
 ```
 
 The protected operations routes are `GET /admin/dlq`, `GET /admin/stuck`, `POST /admin/dlq/replay`, and `POST /admin/retention`. Send the admin secret in `X-Admin-Secret`; send a short operator identity in `X-Admin-Actor`. Retention defaults are 90 days for raw Telegram text, 365 days for structured results, 180 days for errors, and 730 days for audit records. A retention request with `{ "dryRun": true }` reports the configured actions without changing data.
+
+Phase 14 setup page:
+
+The deployed page is [`/setup`](https://telegram-link-bot.pcbot.workers.dev/setup). It currently shows a safe “OAuth not configured” message until Google OAuth credentials are added. In Google Cloud Console, create a Web OAuth client and register this exact callback:
+
+```text
+https://telegram-link-bot.pcbot.workers.dev/auth/google/callback
+```
+
+Then set the credentials without putting them in source control:
+
+```powershell
+npx wrangler secret put GOOGLE_OAUTH_CLIENT_ID
+npx wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET
+npm run deploy
+```
+
+After deployment, open `/setup`, sign in with Google, name the workspace, and paste the Google Sheet link. OAuth state, session, CSRF, and fresh-auth tokens are stored as hashes in D1; the Worker never logs or displays OAuth tokens. Telegram chat linking is intentionally deferred to Phase 15.
 
 ## Deployment
 

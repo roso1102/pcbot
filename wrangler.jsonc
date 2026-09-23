@@ -8,6 +8,7 @@
 	"main": "src/index.js",
 	"compatibility_date": "2026-09-16",
 	"vars": {
+		"APP_BASE_URL": "https://telegram-link-bot.pcbot.workers.dev",
 		"EXTRACTION_PROVIDER": "groq",
 		"GROQ_MODEL": "openai/gpt-oss-120b",
 		"RAW_TELEGRAM_RETENTION_DAYS": "90",

@@ -3,6 +3,7 @@ import { CONTENT_TYPES } from "./gemini";
 import { sendTelegramMessage } from "./telegram";
 import { isAdminAuthorized, listDeadLetterJobs, listStuckJobs, markDeadLetterMessage, replayDeadLetterJob, runRetention, runScheduledOperations } from "./operations";
 import { resolveWorkspaceForChat, storageUrlHash } from "./workspaces";
+import { handleGoogleCallback, handleGoogleStart, handleLogout, handleSetupApi, handleSetupPage } from "./setup";
 
 const SERVICE_NAME = "telegram-link-bot";
 const MAX_TELEGRAM_BODY_BYTES = 1_000_000;
@@ -326,6 +327,11 @@ export default {
 		}
 		if (url.pathname === "/telegram") return handleTelegram(request, env, ctx);
 		if (url.pathname === "/sheet-action") return handleSheetAction(request, env);
+		if (url.pathname === "/setup" && request.method === "GET") return handleSetupPage(request, env);
+		if (url.pathname === "/auth/google/start" && request.method === "GET") return handleGoogleStart(request, env);
+		if (url.pathname === "/auth/google/callback" && request.method === "GET") return handleGoogleCallback(request, env);
+		if (url.pathname === "/auth/logout" && (request.method === "GET" || request.method === "POST")) return handleLogout(request, env);
+		if (url.pathname.startsWith("/api/setup")) return handleSetupApi(request, env);
 		if (url.pathname.startsWith("/admin/")) return handleAdmin(request, env);
 		return json({ ok: false, error: "not_found" }, 404);
 	},
