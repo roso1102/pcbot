@@ -15,9 +15,9 @@ A Cloudflare Workers Telegram bot that accepts URLs, rejects duplicate submissio
 - Cloudflare Queues: main and dead-letter queues created
 - Existing Apps Script bot: code remains untouched for rollback, but its webhook is no longer active
 - Intended GitHub repository: <https://github.com/roso1102/pcbot.git>
-- Current phase: Phase 14 setup foundation deployed; Google OAuth configuration and manual onboarding test remain
+- Current phase: Phase 15 Telegram linking core deployed; staging onboarding and edge-case tests remain
 
-Phases 1–12 passed the single-user migration and hardening gates. Phase 13 added additive workspace ownership. Phase 14 now provides a hosted `/setup` page, Google OAuth flow, D1-backed sessions, CSRF/fresh-auth checks, workspace dashboard, and Sheet connection controls. Add Google OAuth credentials before using sign-in; Telegram linking remains Phase 15. See [ACTION_PLAN.md](./ACTION_PLAN.md) for the phase gate and [HANDOFF.md](./HANDOFF.md) for the continuation point.
+Phases 1–12 passed the single-user migration and hardening gates. Phase 13 added additive workspace ownership. Phase 14 provides the hosted `/setup` page and Google sign-in. Phase 15 now adds one-time Telegram private/group connection links and blocks unconnected chats from storing URLs. Phase 16 direct Google Sheets API work has not started. See [ACTION_PLAN.md](./ACTION_PLAN.md) for the phase gate and [HANDOFF.md](./HANDOFF.md) for the continuation point.
 
 ## Target architecture
 

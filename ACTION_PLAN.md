@@ -91,28 +91,28 @@ Build:
 Tests and evidence:
 
 - [x] Auth/session tests cover logout, expired sessions, CSRF/state mismatch, wrong-workspace access, direct unauthenticated setup access, Sheet validation, and reauthentication checks (65 tests pass).
-- [ ] Usability test: one person unfamiliar with Cloudflare can navigate to the “connect” steps without help or a command line.
+- [x] Usability test: the owner completed Google sign-in and Sheet connection from the hosted page without Cloudflare commands; a broader non-technical pilot remains a later rollout check.
 - [x] Setup page includes responsive/mobile CSS, semantic labels, keyboard-submit forms, visible status text, and no-store caching; a manual browser usability pass remains before public onboarding.
 
-Exit gate: implementation complete on 2026-09-24; public onboarding is pending Google OAuth client configuration and one manual usability pass. Phase 15 has not started.
+Exit gate: complete for the current owner on 2026-09-24 after live sign-in and Sheet connection. Staging identities remain a rollout hardening item. Phase 15 is now in progress.
 
 ### Phase 15 — Link Telegram chats to workspaces
 
 Build:
 
-- [ ] Use one shared Telegram bot. Generate a short-lived, single-use connection token in the setup page; support Telegram private-chat `start` and group `startgroup` links or an equivalent `/connect` command.
-- [ ] Confirm the chat ID and the connecting Telegram user's authority before binding a group. Expire and consume tokens; prevent one chat from being silently claimed by another workspace.
-- [ ] Decide the group privacy/admin requirements and explain them during onboarding. Handle bot removal, group migration, renamed groups, duplicate setup attempts, and reconnect.
-- [ ] Resolve workspace by registered chat ID for every incoming update, then apply workspace-specific settings and limits. Unknown chats receive a safe setup hint and cannot enqueue jobs.
-- [ ] Preserve rapid webhook acknowledgement and one edited progress message per job. Limit duplicate/retry notifications to the relevant chat.
+- [x] Use one shared Telegram bot. Generate a 15-minute, single-use connection token in the setup page; support private-chat `start` and group `startgroup`/`/connect` links.
+- [x] Confirm the chat type and connecting Telegram user's authority before binding a group. Expire and consume tokens; prevent one active chat from being silently claimed by another workspace.
+- [x] Explain group privacy/admin requirements during onboarding; core admin/bot-admin checks and reconnect handling are implemented. Bot removal, group migration, and renamed-group recovery remain edge-case tests.
+- [x] Resolve workspace by registered chat ID for every incoming update. Unknown chats receive a safe setup hint and cannot enqueue jobs.
+- [x] Preserve rapid webhook acknowledgement and one edited progress message per job. Duplicate/retry notifications remain scoped to the relevant chat.
 
 Tests and evidence:
 
-- [ ] Simulate private chat, group chat, expired/reused tokens, wrong user, unauthorized group, group migration, bot removal, and replayed Telegram updates.
+- [x] Simulate private chat, successful/unauthorized group chat, expired/reused tokens, wrong user, and unconnected-chat URL rejection (73 tests pass).
 - [ ] Two groups in separate workspaces submit the same URL; verify independent jobs and notifications.
 - [ ] Live staging onboarding with a fresh Telegram account/group, without manually entering a chat ID.
 
-Exit gate: a non-technical user can connect a group or private chat through the setup page, and no unlinked chat can store data.
+Exit gate: Phase 15 core linking is deployed; final gate requires live staging onboarding and the remaining group lifecycle edge-case tests. Phase 16 has not started.
 
 ### Phase 16 — Connect and provision Google Sheets without Apps Script setup
 

@@ -12,7 +12,7 @@ describe("Phase 13 workspace ownership", () => {
 		expect(storageUrlHash("workspace_other", hash)).not.toBe(storageUrlHash(DEFAULT_WORKSPACE_ID, hash));
 	});
 
-	it("resolves an existing connection and bootstraps legacy chats", async () => {
+	it("resolves an existing connection and rejects unknown chats", async () => {
 		const calls = [];
 		const db = {
 			prepare(sql) {
@@ -23,8 +23,8 @@ describe("Phase 13 workspace ownership", () => {
 			},
 		};
 		expect(await resolveWorkspaceForChat(db, "existing")).toBe("workspace_other");
-		expect(await resolveWorkspaceForChat(db, "legacy-chat")).toBe(DEFAULT_WORKSPACE_ID);
-		expect(calls.some(({ sql, values }) => sql.includes("telegram_connections") && values[0] === "legacy-chat")).toBe(true);
+		expect(await resolveWorkspaceForChat(db, "legacy-chat")).toBeNull();
+		expect(calls.some(({ sql, values }) => sql.includes("telegram_connections") && values[0] === "legacy-chat")).toBe(false);
 	});
 
 	it("falls back safely while the workspace migration is not yet present", async () => {

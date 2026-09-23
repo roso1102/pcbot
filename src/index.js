@@ -4,6 +4,7 @@ import { sendTelegramMessage } from "./telegram";
 import { isAdminAuthorized, listDeadLetterJobs, listStuckJobs, markDeadLetterMessage, replayDeadLetterJob, runRetention, runScheduledOperations } from "./operations";
 import { resolveWorkspaceForChat, storageUrlHash } from "./workspaces";
 import { handleGoogleCallback, handleGoogleStart, handleLogout, handleSetupApi, handleSetupPage } from "./setup";
+import { connectTelegramUpdate, sendConnectionResult } from "./telegram-linking";
 
 const SERVICE_NAME = "telegram-link-bot";
 const MAX_TELEGRAM_BODY_BYTES = 1_000_000;
@@ -197,7 +198,6 @@ async function enqueueJobs(update, urls, env) {
 	const userNote = getUserNote(message);
 	const senderName = getSenderName(message);
 	const senderUsername = getSenderUsername(message);
-	if (!allowedChat(env, chatId)) return { error: "chat_not_allowed" };
 	const workspaceId = await resolveWorkspaceForChat(env.DB, chatId);
 	if (!workspaceId) return { error: "chat_not_connected" };
 	const queued = [];
@@ -267,9 +267,26 @@ async function handleTelegram(request, env, ctx) {
 		return json({ ok: false, error: "invalid_json" }, 400);
 	}
 	if (!update || typeof update !== "object" || Array.isArray(update)) return json({ ok: false, error: "invalid_update" }, 400);
+	if (env?.DB) {
+		try {
+			const connection = await connectTelegramUpdate(update, env);
+			if (connection?.handled) {
+				if (ctx?.waitUntil) ctx.waitUntil(sendConnectionResult(connection, update, env).catch(() => undefined));
+				return json({ ok: true, status: connection.status });
+			}
+		} catch {
+			return json({ ok: true, status: "connection_failed" });
+		}
+	}
 	const urls = extractUrls(update);
 	if (!Number.isSafeInteger(Number(update.update_id))) return json({ ok: false, error: "update_id_required" }, 400);
-	if (!allowedChat(env, getChatId(update))) return json({ ok: false, error: "chat_not_allowed" }, 403);
+	if (urls.length > 0 && env?.DB) {
+		const workspaceId = await resolveWorkspaceForChat(env.DB, getChatId(update));
+		if (!workspaceId) {
+			if (env?.TELEGRAM_BOT_TOKEN && ctx?.waitUntil) ctx.waitUntil(sendTelegramMessage(getChatId(update), "This chat is not connected to a workspace yet. Generate a Telegram connection link from the setup page first.", env).catch(() => undefined));
+			return json({ ok: true, status: "not_connected", reason: "telegram_not_connected" });
+		}
+	}
 	if (env?.DB && env?.JOBS_QUEUE && urls.length > 0) {
 		try {
 			const result = await enqueueJobs(update, urls, env);

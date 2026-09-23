@@ -13,11 +13,12 @@ Project path: `D:\telepc\telegram-link-bot`
 | Cloudflare authentication | Authenticated according to project handoff |
 | Source | Deployed intake, workspace ownership, TinyFish/Firecrawl page reader, Groq primary extractor, Google Sheets bridge, and Phase 12 operations in `src/` |
 | Current response | `/health` returns JSON; `/telegram` validates the webhook secret and extracts normalized URLs; `/admin/*` is protected by a separate admin secret |
-| Tests | 65 tests pass with `npm test -- --run`; latest bundle passes Wrangler dry-run |
+| Tests | 73 tests pass with `npm test -- --run`; latest bundle passes Wrangler dry-run |
 | Phase 2 deployment | Complete: deployed and `/health` verified at the public Worker URL |
 | Phase 13 deployment | Complete: Worker version `f8f99b4e-278a-46ad-81f5-d9ef1a6ab20f`; migration `0006_workspaces.sql` applied remotely |
-| Phase 14 deployment | Setup foundation deployed; migration `0007_phase14_auth.sql` applied remotely; Google OAuth credentials not configured yet |
-| D1 | Created in APAC, bound as `DB`, migrations `0001_initial.sql` through `0007_phase14_auth.sql` applied and verified remotely; 22 jobs preserved in `workspace_default` |
+| Phase 14 deployment | Complete for current owner; live Google sign-in and Sheet connection confirmed |
+| Phase 15 deployment | Core Telegram linking deployed as Worker version `100a8bbc-d55f-47f3-9c2e-165020bbd3ea`; migration `0008_phase15_telegram_links.sql` applied remotely; final staging/edge-case gate remains |
+| D1 | Created in APAC, bound as `DB`, migrations `0001_initial.sql` through `0008_phase15_telegram_links.sql` applied and verified remotely; 22 jobs preserved in `workspace_default` |
 | Work Queue | Created as `telegram-link-jobs`; producer/consumer/DLQ config deployed, including the DLQ consumer |
 | Dead-letter Queue | Created as `telegram-link-jobs-dlq` |
 | Cloudflare secrets | Telegram, TinyFish, Groq, Sheets bridge, allowlist, admin, and Telegram alert recipient secrets configured |
@@ -27,7 +28,7 @@ Project path: `D:\telepc\telegram-link-bot`
 | Intended GitHub repo | <https://github.com/roso1102/pcbot.git> |
 | Local Git remote | `origin` points to the intended GitHub repository |
 
-The Worker is now live on the Groq-primary path, the public `/health` endpoint returns `ok: true`, and the Telegram webhook is connected to `/telegram`. D1 migrations through `0007_phase14_auth.sql` are applied remotely. Phase 14 adds `/setup`, Google OAuth start/callback routes, D1-backed HttpOnly sessions, CSRF and fresh-auth checks, workspace ownership checks, and a plain-language Sheet/activity dashboard. OAuth remains intentionally disabled until `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` are configured. Phase 13 preserves legacy owner Sheet keys; Phase 12 adds `job_replays`/`job_alerts`, a DLQ consumer, protected admin routes, and scheduled retention/stuck-job scanning.
+The Worker is now live on the Groq-primary path, the public `/health` endpoint returns `ok: true`, and the Telegram webhook is connected to `/telegram`. D1 migrations through `0008_phase15_telegram_links.sql` are applied remotely. Phase 14 setup is live with Google OAuth, sessions, and Sheet connection controls. Phase 15 adds short-lived Telegram link tokens, private/group connection handling, group admin verification, single-use consumption, and fail-closed unknown-chat intake. Phase 13 preserves legacy owner Sheet keys; Phase 12 adds `job_replays`/`job_alerts`, a DLQ consumer, protected admin routes, and scheduled retention/stuck-job scanning.
 
 Both Queues exist remotely. `wrangler.jsonc` has a `JOBS_QUEUE` producer, a main consumer configured for three retries with `telegram-link-jobs-dlq` as its dead-letter queue, and a DLQ consumer that marks exhausted jobs `dead_letter` and records an alert audit row.
 
@@ -39,7 +40,7 @@ With Telegram privacy mode off, the bot can receive all group messages. Intake s
 
 ## Start here
 
-Phase 14 implementation is deployed but not yet at its public-onboarding exit gate. Evidence includes 65 passing tests, a clean local seven-migration rehearsal, remote auth-table verification, a live `/setup` page (currently showing the safe OAuth-not-configured message), a live `/health` check, and a deployed Worker. Configure OAuth and complete one manual onboarding pass before starting Phase 15.
+Phase 14 exit gate is complete for the current owner: Google sign-in and Sheet connection were confirmed from the hosted page. Phase 15 core implementation is deployed. Evidence includes 73 passing tests, a clean local eight-migration rehearsal, remote token-table verification, preserved 22-job/3-chat baseline, and a live `/health` check. Complete live staging onboarding and edge-case tests before starting Phase 16.
 
 Read [README.md](./README.md) for architecture and operating rules and [ACTION_PLAN.md](./ACTION_PLAN.md) for phase gates.
 

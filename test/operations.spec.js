@@ -101,7 +101,7 @@ describe("Phase 12 operations", () => {
 		const db = new OperationsDb();
 		const result = await runRetention(db, {}, { dryRun: false });
 		expect(result.dryRun).toBe(false);
-		expect(Object.keys(result.counts)).toHaveLength(7);
-		expect(db.runs).toHaveLength(7);
+		expect(Object.keys(result.counts)).toHaveLength(8);
+		expect(db.runs).toHaveLength(8);
 	});
 });

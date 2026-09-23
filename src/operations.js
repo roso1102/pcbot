@@ -143,6 +143,7 @@ export async function runRetention(db, env = {}, { dryRun = false } = {}) {
 		["deletion_audit_deleted", "DELETE FROM job_deletions WHERE deleted_at < datetime('now', ?)", `-${config.auditDays} days`],
 		["auth_sessions_deleted", "DELETE FROM auth_sessions WHERE expires_at < CURRENT_TIMESTAMP OR revoked_at < datetime('now', '-30 days')", null],
 		["oauth_states_deleted", "DELETE FROM oauth_states WHERE expires_at < CURRENT_TIMESTAMP OR consumed_at < datetime('now', '-1 day')", null],
+		["telegram_link_tokens_deleted", "DELETE FROM telegram_link_tokens WHERE expires_at < CURRENT_TIMESTAMP OR consumed_at < datetime('now', '-1 day')", null],
 	];
 	if (dryRun) return { dryRun: true, config, actions: statements.map(([name]) => name) };
 	const counts = {};

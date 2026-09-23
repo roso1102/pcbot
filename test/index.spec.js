@@ -8,7 +8,7 @@ class FakeD1 {
 	constructor() {
 		this.jobs = new Map();
 		this.errors = [];
-		this.connections = new Map();
+		this.connections = new Map([["42", "workspace_default"]]);
 	}
 
 	prepare(sql) {
@@ -126,6 +126,16 @@ describe("telegram intake", () => {
 		expect(db.jobs.size).toBe(2);
 		expect(queue.messages).toHaveLength(2);
 		expect(queue.messages[0]).toMatchObject({ version: 1, correlationId: queue.messages[0].jobId });
+	});
+
+	it("does not enqueue a URL from an unconnected Telegram chat", async () => {
+		const db = new FakeD1();
+		const queue = new FakeQueue();
+		const body = JSON.stringify({ update_id: 101, message: { chat: { id: 77 }, text: "https://example.com/unconnected" } });
+		const response = await worker.fetch(new Request("https://example.com/telegram", telegramInit(body)), { ...env, DB: db, JOBS_QUEUE: queue });
+		expect(await response.json()).toEqual({ ok: true, status: "not_connected", reason: "telegram_not_connected" });
+		expect(db.jobs.size).toBe(0);
+		expect(queue.messages).toHaveLength(0);
 	});
 
 	it("deduplicates a normalized URL across Telegram updates", async () => {
