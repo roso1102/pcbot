@@ -97,6 +97,20 @@ function getSenderUsername(message) {
 	return typeof message?.from?.username === "string" ? message.from.username : null;
 }
 
+function isSetupCommand(update) {
+	const message = getTelegramMessages(update)[0];
+	const text = typeof message?.text === "string" ? message.text.trim() : "";
+	return /^\/(?:setup|connect|start)(?:@[A-Za-z0-9_]+)?$/i.test(text);
+}
+
+async function handleSetupCommand(update, request, env, ctx) {
+	const chatId = getChatId(update);
+	const base = String(env?.APP_BASE_URL ?? new URL(request.url).origin).replace(/\/$/, "");
+	const text = `Open the setup page to connect this Telegram chat:\n${base}/setup\n\nIf you are connecting a group, make sure you are a group admin and the bot is an admin.`;
+	if (env?.TELEGRAM_BOT_TOKEN && chatId !== undefined && ctx?.waitUntil) ctx.waitUntil(sendTelegramMessage(chatId, text, env).catch(() => undefined));
+	return json({ ok: true, status: "setup_link_sent" });
+}
+
 function toHex(bytes) {
 	return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
@@ -267,6 +281,7 @@ async function handleTelegram(request, env, ctx) {
 		return json({ ok: false, error: "invalid_json" }, 400);
 	}
 	if (!update || typeof update !== "object" || Array.isArray(update)) return json({ ok: false, error: "invalid_update" }, 400);
+	if (isSetupCommand(update)) return handleSetupCommand(update, request, env, ctx);
 	if (env?.DB) {
 		try {
 			const connection = await connectTelegramUpdate(update, env);

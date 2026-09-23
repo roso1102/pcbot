@@ -110,6 +110,12 @@ describe("telegram intake", () => {
 		expect(await response.json()).toEqual({ ok: true, status: "ignored", reason: "no_supported_url" });
 	});
 
+	it("responds to Telegram setup commands with the hosted setup URL", async () => {
+		const body = JSON.stringify({ update_id: 4, message: { chat: { id: 42 }, text: "/setup" } });
+		const response = await request("/telegram", telegramInit(body));
+		expect(await response.json()).toEqual({ ok: true, status: "setup_link_sent" });
+	});
+
 	it("returns 405 for a wrong method on the Telegram route", async () => {
 		const response = await request("/telegram", { method: "GET" });
 		expect(response.status).toBe(405);
