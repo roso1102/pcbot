@@ -15,9 +15,9 @@ A Cloudflare Workers Telegram bot that accepts URLs, rejects duplicate submissio
 - Cloudflare Queues: main and dead-letter queues created
 - Existing Apps Script bot: code remains untouched for rollback, but its webhook is no longer active
 - Intended GitHub repository: <https://github.com/roso1102/pcbot.git>
-- Local Git remote: not configured as of 2026-09-19
+- Current phase: Phase 12 baseline/hardening; hosted multi-workspace phases are intentionally paused
 
-Phases 1–8 have passed the first end-to-end path. The current next gate is failure/duplicate verification followed by Google Sheets persistence. See [ACTION_PLAN.md](./ACTION_PLAN.md) for the implementation sequence and [HANDOFF.md](./HANDOFF.md) for the continuation point.
+Phases 1–11 have passed the core migration path. Phase 12 adds protected DLQ inspection/replay, deduplicated stuck-job alerts, scheduled retention, and operational tests. Apply the Phase 12 migration and configure the admin secret before using the new admin routes. See [ACTION_PLAN.md](./ACTION_PLAN.md) for the phase gate and [HANDOFF.md](./HANDOFF.md) for the continuation point.
 
 ## Target architecture
 
@@ -109,6 +109,8 @@ Use bindings for Cloudflare resources and secrets for credentials. Names below a
 | Sheet action endpoint | `POST /sheet-action` | HMAC-signed Apps Script requests |
 | Target calendar | Not configured yet | Deferred future feature |
 | Telegram allowlist | `TELEGRAM_ALLOWED_CHAT_IDS` | Secret or non-secret variable |
+| Operations admin authentication | `ADMIN_API_SECRET` | Secret; required for `/admin/*` routes |
+| Operations alert recipients | `TELEGRAM_ADMIN_CHAT_IDS` | Secret or non-secret variable; comma-separated chat IDs |
 
 Do not add placeholder bindings to `wrangler.jsonc` until the matching resources exist and their generated identifiers are known.
 
@@ -135,6 +137,17 @@ Invoke-RestMethod http://localhost:8787/health
 ```
 
 Use `.dev.vars` for local-only secrets. Commit only a redacted `.dev.vars.example` that contains names, never real values.
+
+Phase 12 setup after local tests pass:
+
+```powershell
+npx wrangler d1 migrations apply telegram-link-bot-db --remote
+npx wrangler secret put ADMIN_API_SECRET
+# Optional alerts: npx wrangler secret put TELEGRAM_ADMIN_CHAT_IDS
+npm run deploy
+```
+
+The protected operations routes are `GET /admin/dlq`, `GET /admin/stuck`, `POST /admin/dlq/replay`, and `POST /admin/retention`. Send the admin secret in `X-Admin-Secret`; send a short operator identity in `X-Admin-Actor`. Retention defaults are 90 days for raw Telegram text, 365 days for structured results, 180 days for errors, and 730 days for audit records. A retention request with `{ "dryRun": true }` reports the configured actions without changing data.
 
 ## Deployment
 

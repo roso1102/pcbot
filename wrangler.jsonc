@@ -9,7 +9,13 @@
 	"compatibility_date": "2026-09-16",
 	"vars": {
 		"EXTRACTION_PROVIDER": "groq",
-		"GROQ_MODEL": "openai/gpt-oss-120b"
+		"GROQ_MODEL": "openai/gpt-oss-120b",
+		"RAW_TELEGRAM_RETENTION_DAYS": "90",
+		"JOB_RESULT_RETENTION_DAYS": "365",
+		"ERROR_RETENTION_DAYS": "180",
+		"DELETION_AUDIT_RETENTION_DAYS": "730",
+		"STUCK_JOB_MINUTES": "15",
+		"ALERT_SCAN_LIMIT": "25"
 	},
 	"observability": {
 		"enabled": true
@@ -36,8 +42,17 @@
 				"max_batch_timeout": 5,
 				"max_retries": 3,
 				"dead_letter_queue": "telegram-link-jobs-dlq"
+			},
+			{
+				"queue": "telegram-link-jobs-dlq",
+				"max_batch_size": 10,
+				"max_batch_timeout": 5,
+				"max_retries": 0
 			}
 		]
+	},
+	"triggers": {
+		"crons": ["*/15 * * * *"]
 	}
 	/**
 	 * Smart Placement

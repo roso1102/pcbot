@@ -1,6 +1,7 @@
 import { processQueueMessage } from "./processor";
 import { CONTENT_TYPES } from "./gemini";
 import { sendTelegramMessage } from "./telegram";
+import { isAdminAuthorized, listDeadLetterJobs, listStuckJobs, markDeadLetterMessage, replayDeadLetterJob, runRetention, runScheduledOperations } from "./operations";
 
 const SERVICE_NAME = "telegram-link-bot";
 const MAX_TELEGRAM_BODY_BYTES = 1_000_000;
@@ -275,6 +276,35 @@ async function handleTelegram(request, env, ctx) {
 	return json({ ok: true, status: urls.length > 0 ? "received" : "ignored", ...(urls.length > 0 ? { urls } : { reason: "no_supported_url" }) });
 }
 
+async function handleAdmin(request, env) {
+	if (!env?.ADMIN_API_SECRET) return json({ ok: false, error: "admin_not_configured" }, 503);
+	if (!isAdminAuthorized(request, env)) return json({ ok: false, error: "unauthorized" }, 401);
+	const url = new URL(request.url);
+	if (url.pathname === "/admin/dlq" && request.method === "GET") {
+		return json({ ok: true, jobs: await listDeadLetterJobs(env.DB, url.searchParams.get("limit")) });
+	}
+	if (url.pathname === "/admin/stuck" && request.method === "GET") {
+		return json({ ok: true, jobs: await listStuckJobs(env.DB, env) });
+	}
+	if (url.pathname === "/admin/dlq/replay" && request.method === "POST") {
+		let body;
+		try { body = await request.json(); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
+		const jobId = String(body?.jobId ?? "").trim();
+		if (!jobId || jobId.length > 100) return json({ ok: false, error: "job_id_required" }, 400);
+		const result = await replayDeadLetterJob(jobId, request.headers.get("X-Admin-Actor") ?? "operator", body?.reason, env);
+		return json(result, result.status ?? 500);
+	}
+	if (url.pathname === "/admin/retention" && request.method === "POST") {
+		let body = {};
+		const rawBody = await request.text();
+		if (rawBody.trim()) {
+			try { body = JSON.parse(rawBody); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
+		}
+		return json({ ok: true, ...(await runRetention(env.DB, env, { dryRun: body?.dryRun === true })) });
+	}
+	return json({ ok: false, error: "not_found" }, 404);
+}
+
 export default {
 	async fetch(request, env, ctx) {
 		const url = new URL(request.url);
@@ -284,10 +314,19 @@ export default {
 		}
 		if (url.pathname === "/telegram") return handleTelegram(request, env, ctx);
 		if (url.pathname === "/sheet-action") return handleSheetAction(request, env);
+		if (url.pathname.startsWith("/admin/")) return handleAdmin(request, env);
 		return json({ ok: false, error: "not_found" }, 404);
 	},
 
 	async queue(batch, env) {
+		if (batch.queue === "telegram-link-jobs-dlq") {
+			for (const message of batch.messages) await markDeadLetterMessage(message, env);
+			return;
+		}
 		for (const message of batch.messages) await processQueueMessage(message, env);
+	},
+
+	async scheduled(_controller, env, ctx) {
+		ctx.waitUntil(runScheduledOperations(env));
 	},
 };

@@ -31,19 +31,29 @@ Build:
 
 - [x] Record the actual deployed version, Git commit, current D1 schema, queue/DLQ settings, secret names, and Google bridge version. Correct stale status claims in the historical documentation.
 - [ ] Exercise the current end-to-end flow with a disposable Sheet: link intake, duplicate, website/article/grant extraction, Save edits, Archive, Restore, Delete, and a failed-job retry.
-- [ ] Define a stable job state machine and the source of truth for Sheets versus `jobs.result_json`. Decide how to reconcile a D1 success followed by a Sheet or Telegram failure.
-- [ ] Implement safe, audited DLQ inspection/replay and alerts for stuck jobs. Ensure a replay cannot create a second Sheet row or notify the wrong chat.
-- [ ] Set explicit retention periods for raw Telegram messages, job results, errors, deletion audit records, and logs; implement cleanup only after backup and deletion behavior are tested.
+- [x] Define a stable job state machine and the source of truth for Sheets versus `jobs.result_json`. Decide how to reconcile a D1 success followed by a Sheet or Telegram failure.
+- [x] Implement safe, audited DLQ inspection/replay and alerts for stuck jobs. Ensure a replay cannot create a second Sheet row or notify the wrong chat. The implementation remains disabled until the migration and admin secret are configured.
+- [x] Set explicit retention periods for raw Telegram messages, job results, errors, deletion audit records, and logs; implement cleanup only after backup and deletion behavior are tested.
 - [ ] Capture a baseline for expected latency, provider cost per link, Queue backlog, and typical links per user.
 
 Tests and evidence:
 
 - [ ] Unit/integration tests for duplicate Telegram updates, duplicate URLs, concurrent submissions, queue redelivery, provider 429/5xx/timeouts, invalid model output, and partial Sheet writes.
+- [x] Focused Phase 12 tests cover admin authorization, DLQ state marking, replay idempotency, alert deduplication, and retention dry-run behavior (41 tests pass in total).
 - [ ] Staging test of retry exhaustion into the DLQ and one controlled replay; compare D1 job, Sheet row, and Telegram notifications before/after.
 - [ ] Restore a disposable D1 copy and verify a representative job and action history; retain a restore runbook.
-- [x] Run `npm test -- --run`, `npx wrangler deploy --dry-run`, and a live staging smoke test. Current evidence: 37 tests passed and the dry-run exposes the expected D1/Queue/provider bindings; remaining gaps are listed below.
+- [x] Run `npm test -- --run`, `npx wrangler deploy --dry-run`, and a live staging smoke test. Current evidence: 41 tests passed and the dry-run exposes the expected D1/Queue/provider bindings; remaining gaps are listed below.
+- [x] Apply and verify `0005_phase12_operations.sql` remotely; deploy the DLQ consumer and 15-minute scheduled operations trigger. The live admin routes remain locked until `ADMIN_API_SECRET` is configured.
+- [x] Live smoke check after deployment: `/health` returns `{ "ok": true, "service": "telegram-link-bot" }`; `/admin/dlq` returns controlled `503 admin_not_configured` until the operator supplies the separate admin secret.
 
 Exit gate: the current path is reliable enough to serve as a behavior reference, with documented failure recovery and no unexplained duplicate rows.
+
+Phase 12 operating contract:
+
+- `jobs.status` is the durable state machine: `queued` → `processing` → `completed`; retryable failures return to `queued`; terminal failures become `failed`; Queue exhaustion is marked `dead_letter` by the DLQ consumer; an approved replay moves `failed`/`dead_letter` back to `queued` and resets the attempt counter.
+- `jobs.result_json` is the canonical structured result. Google Sheets is a user-facing projection and may be reconciled by URL hash/row key. A D1 success remains successful if a secondary Sheet or Telegram notification fails; those secondary failures are recorded and retried independently.
+- Phase 12 retention defaults are: raw Telegram message/note 90 days, structured result 365 days, errors 180 days, and deletion/replay audit 730 days. Cleanup redacts or removes only expired data; it does not delete job identity rows, preserving deduplication and auditability.
+- `GET /admin/dlq`, `GET /admin/stuck`, `POST /admin/dlq/replay`, and `POST /admin/retention` require the separate `ADMIN_API_SECRET`. Alerts are deduplicated in D1 and optionally sent to `TELEGRAM_ADMIN_CHAT_IDS`.
 
 ### Phase 13 — Add workspace ownership without changing current behavior
 
@@ -228,8 +238,9 @@ The sections below record how this installation was built. Their “Next” note
 - Phase 7: TinyFish is the primary page reader; Firecrawl remains an optional fallback. UTF-8 cleanup, UI-noise cleanup, response-size limits, and controlled provider errors are implemented.
 - Phase 8: Groq `openai/gpt-oss-120b` is the deployed primary extractor. Strict schema mode falls back to JSON Object Mode and normalizes partial output; websites, grants, competitions, events, tools, articles, and other reference pages are classified. Gemini remains opt-in.
 - Phase 9: Google Sheets bridge is live with `Links`, `Status`, `Failures`, and `Archive` tabs, URL-hash idempotency, row tracking, signed Save edits/Archive/Restore/Delete actions, dropdown types, deadline/tags fields, and formatted Telegram results. The latest Apps Script bridge code and trigger still need a final manual verification in the Sheet.
-- Phase 10–11: automated tests cover the core duplicate, provider, schema, and sheet-action paths; the production Telegram webhook has been switched and successful jobs have been observed. Full DLQ replay, retention, alerting, provider-outage, and rollback drills remain open.
-- Deployment evidence: Worker version `a9009bee-0b29-440b-b720-537764061b5d`, Git commit `e632576`, D1 database `ff71f2d7-cd58-4122-aa9e-ef24c65c5733`, queues `telegram-link-jobs`/`telegram-link-jobs-dlq`, and deployed consumer settings are recorded from the current configuration.
+- Phase 10–11: automated tests cover the core duplicate, provider, schema, sheet-action, and Phase 12 operations paths; the production Telegram webhook has been switched and successful jobs have been observed. Full DLQ replay, retention, alerting, provider-outage, and rollback drills remain open until the live admin path is exercised.
+- Phase 12 deployment evidence: Worker version `5ac670e9-ccd1-48a2-9868-b96183de5b66`, D1 migration `0005_phase12_operations.sql` applied remotely, 15-minute scheduled operations trigger enabled, and both main/DLQ consumers deployed. `ADMIN_API_SECRET` is intentionally not configured yet, so admin routes return `admin_not_configured`.
+- Deployment baseline: D1 database `ff71f2d7-cd58-4122-aa9e-ef24c65c5733`, queues `telegram-link-jobs`/`telegram-link-jobs-dlq`, and consumer settings are recorded from the current configuration. Git commit is recorded after this Phase 12 change is committed.
 - Calendar/reminder integration remains intentionally deferred. The next gate is to verify the current Sheets bridge manually, then complete operational/recovery evidence before starting the hosted multi-workspace roadmap above.
 
 ## Definition of done
