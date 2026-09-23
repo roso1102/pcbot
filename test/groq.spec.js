@@ -79,4 +79,15 @@ describe("Groq fallback extraction", () => {
 	it("marks provider rate limits as retryable", async () => {
 		await expect(extractWithGroq("https://example.com", "post text", { GROQ_API_KEY: "groq-test", GROQ_MODEL: "openai/gpt-oss-20b" }, mockFetch({}, 429))).rejects.toMatchObject({ code: "groq_http_429", retryable: true });
 	});
+
+	it("classifies provider 5xx and timeouts as retryable", async () => {
+		await expect(extractWithGroq("https://example.com", "post text", { GROQ_API_KEY: "groq-test" }, mockFetch({}, 503))).rejects.toMatchObject({ code: "groq_http_503", retryable: true });
+		const timeout = new Error("aborted");
+		timeout.name = "AbortError";
+		await expect(extractWithGroq("https://example.com", "post text", { GROQ_API_KEY: "groq-test" }, async () => { throw timeout; })).rejects.toMatchObject({ code: "timeout", retryable: true });
+	});
+
+	it("rejects invalid model JSON without producing a destination payload", async () => {
+		await expect(extractWithGroq("https://example.com", "post text", { GROQ_API_KEY: "groq-test" }, async () => new Response(JSON.stringify({ choices: [{ message: { content: "not-json" } }] }), { status: 200 }))).rejects.toMatchObject({ code: "invalid_json_output", retryable: false });
+	});
 });

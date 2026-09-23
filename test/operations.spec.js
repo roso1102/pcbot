@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import worker from "../src";
-import { markDeadLetterMessage, replayDeadLetterJob, runRetention } from "../src/operations";
+import { markDeadLetterMessage, replayDeadLetterJob, runRetention, scanStuckJobs } from "../src/operations";
 
 const adminSecret = "phase12-admin-secret";
 
@@ -85,5 +85,23 @@ describe("Phase 12 operations", () => {
 		expect(result).toMatchObject({ dryRun: true, config: { rawTelegramDays: 30, resultDays: 180 } });
 		expect(result.actions).toContain("raw_messages_redacted");
 		expect(db.runs).toHaveLength(0);
+	});
+
+	it("records one alert for a stuck job and suppresses duplicate scans", async () => {
+		const db = new OperationsDb("processing");
+		const env = { DB: db, STUCK_JOB_MINUTES: "15", TELEGRAM_BOT_TOKEN: "", TELEGRAM_ADMIN_CHAT_IDS: "" };
+		const first = await scanStuckJobs(env);
+		const second = await scanStuckJobs(env);
+		expect(first.scanned).toBe(1);
+		expect(second.scanned).toBe(1);
+		expect(db.alerts).toHaveLength(1);
+	});
+
+	it("executes all retention actions when not in dry-run mode", async () => {
+		const db = new OperationsDb();
+		const result = await runRetention(db, {}, { dryRun: false });
+		expect(result.dryRun).toBe(false);
+		expect(Object.keys(result.counts)).toHaveLength(5);
+		expect(db.runs).toHaveLength(5);
 	});
 });

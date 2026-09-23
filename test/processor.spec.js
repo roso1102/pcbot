@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatSuccessMessage } from "../src/processor";
+import { formatSuccessMessage, processQueueMessage } from "../src/processor";
 
 describe("Telegram success formatting", () => {
 	it("uses readable HTML headings, spacing, and a source link without tags", () => {
@@ -20,5 +20,19 @@ describe("Telegram success formatting", () => {
 		expect(message).toContain("<b>Deadline</b>: 2026-11-01");
 		expect(message).toContain("<b>Source</b>: <a href=\"https://example.com/a?x=1&amp;y=2\">Open link</a>");
 		expect(message).not.toContain("Tags:");
+	});
+});
+
+describe("Queue redelivery", () => {
+	it("acknowledges a redelivered completed job without reprocessing", async () => {
+		let fetched = false;
+		const db = {
+			prepare: () => ({ bind: () => ({ first: async () => ({ id: "job-1", status: "completed" }) }) }),
+		};
+		const message = { body: { version: 1, jobId: "job-1" }, ack: () => { message.acked = true; }, retry: () => { message.retried = true; } };
+		await processQueueMessage(message, { DB: db }, async () => { fetched = true; return new Response(); });
+		expect(message.acked).toBe(true);
+		expect(message.retried).not.toBe(true);
+		expect(fetched).toBe(false);
 	});
 });

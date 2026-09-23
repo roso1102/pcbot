@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SHEET_HEADERS, buildSheetRow, findExistingSheetRow } from "../src/google-sheets";
+import { SHEET_HEADERS, buildSheetRow, findExistingSheetRow, syncJobToSheets } from "../src/google-sheets";
 
 const job = { id: "job-1", url_hash: "hash-1", normalized_url: "https://example.com/post" };
 const extraction = {
@@ -37,5 +37,10 @@ describe("Google Sheets row mapping", () => {
 		const row = buildSheetRow(job, { ...extraction, type: "competition", deadline: "2026-11-30" }, "tinyfish+gemini");
 		expect(row[6]).toBe("competition");
 		expect(row[7]).toBe("2026-11-30");
+	});
+
+	it("classifies partial bridge failures as retryable without inventing a row", async () => {
+		const failedResponse = () => new Response(JSON.stringify({ ok: false, error: "temporary" }), { status: 503 });
+		await expect(syncJobToSheets(job, extraction, "tinyfish+groq", { GOOGLE_SHEETS_BRIDGE_URL: "https://bridge.example", GOOGLE_SHEETS_BRIDGE_SECRET: "bridge-secret" }, failedResponse)).rejects.toMatchObject({ code: "bridge_http_503", retryable: true });
 	});
 });

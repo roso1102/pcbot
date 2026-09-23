@@ -18,14 +18,14 @@ Project path: `D:\telepc\telegram-link-bot`
 | D1 | Created in APAC, bound as `DB`, migrations `0001_initial.sql` through `0005_phase12_operations.sql` applied and verified remotely |
 | Work Queue | Created as `telegram-link-jobs`; producer/consumer/DLQ config deployed, including the DLQ consumer |
 | Dead-letter Queue | Created as `telegram-link-jobs-dlq` |
-| Cloudflare secrets | Telegram, TinyFish, Groq, Sheets bridge, and allowlist secrets configured; `ADMIN_API_SECRET` and optional `TELEGRAM_ADMIN_CHAT_IDS` still need operator setup |
+| Cloudflare secrets | Telegram, TinyFish, Groq, Sheets bridge, allowlist, admin, and Telegram alert recipient secrets configured |
 | Telegram webhook | Worker webhook registered at `/telegram`; first end-to-end job completed |
 | Telegram test context | Group chat; bot privacy mode off; bot is admin; user is group owner |
 | Existing Apps Script bot | Code remains untouched and webhook inactive; retained for rollback |
 | Intended GitHub repo | <https://github.com/roso1102/pcbot.git> |
 | Local Git remote | `origin` points to the intended GitHub repository |
 
-The Worker is now live on the Groq-primary path, the public `/health` endpoint returns `ok: true`, and the Telegram webhook is connected to `/telegram`. D1 migrations through `0005_phase12_operations.sql` are applied remotely. Phase 12 adds `job_replays`/`job_alerts`, a DLQ consumer, protected admin routes, and a 15-minute scheduled retention/stuck-job scan. The admin routes safely return `admin_not_configured` until the operator sets `ADMIN_API_SECRET`.
+The Worker is now live on the Groq-primary path, the public `/health` endpoint returns `ok: true`, and the Telegram webhook is connected to `/telegram`. D1 migrations through `0005_phase12_operations.sql` are applied remotely. Phase 12 adds `job_replays`/`job_alerts`, a DLQ consumer, protected admin routes, and a 15-minute scheduled retention/stuck-job scan. The authenticated admin routes have been exercised successfully.
 
 Both Queues exist remotely. `wrangler.jsonc` has a `JOBS_QUEUE` producer, a main consumer configured for three retries with `telegram-link-jobs-dlq` as its dead-letter queue, and a DLQ consumer that marks exhausted jobs `dead_letter` and records an alert audit row.
 
@@ -37,13 +37,7 @@ With Telegram privacy mode off, the bot can receive all group messages. Intake s
 
 ## Start here
 
-Stay in Phase 12 until its tests and live checks pass:
-
-1. Set `ADMIN_API_SECRET` interactively with Wrangler; optionally set `TELEGRAM_ADMIN_CHAT_IDS` for Telegram alerts.
-2. Use `GET /admin/dlq` and `GET /admin/stuck` with `X-Admin-Secret` to inspect operational state.
-3. Run a controlled failed job, verify DLQ marking, replay it once with `POST /admin/dlq/replay`, and compare D1, Sheets, and Telegram outcomes.
-4. Run `POST /admin/retention` first with `{ "dryRun": true }`, then verify the scheduled cleanup/alert behavior.
-5. Do not start workspace/OAuth/hosted-service phases until the Phase 12 acceptance gate is explicitly approved.
+Phase 12 baseline/hardening is complete. Evidence includes 51 passing tests, a remote D1 export/import restore rehearsal, authenticated DLQ/stuck/retention checks, a synthetic DLQ replay, and a successful real-group replay reconciled to Sheet row 12. Do not start workspace/OAuth/hosted-service work until the owner explicitly approves Phase 13.
 
 Read [README.md](./README.md) for architecture and operating rules and [ACTION_PLAN.md](./ACTION_PLAN.md) for phase gates.
 

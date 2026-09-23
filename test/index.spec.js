@@ -137,6 +137,34 @@ describe("telegram intake", () => {
 		expect(queue.messages).toHaveLength(1);
 	});
 
+	it("treats a repeated Telegram update as harmless", async () => {
+		const db = new FakeD1();
+		const queue = new FakeQueue();
+		const body = JSON.stringify({ update_id: 14, message: { chat: { id: 42 }, text: "https://example.com/repeated" } });
+		const first = await worker.fetch(new Request("https://example.com/telegram", telegramInit(body)), { ...env, DB: db, JOBS_QUEUE: queue });
+		const second = await worker.fetch(new Request("https://example.com/telegram", telegramInit(body)), { ...env, DB: db, JOBS_QUEUE: queue });
+		expect(await first.json()).toMatchObject({ status: "queued", queued: ["https://example.com/repeated"] });
+		expect(await second.json()).toMatchObject({ status: "queued", queued: [], duplicates: ["https://example.com/repeated"] });
+		expect(db.jobs.size).toBe(1);
+		expect(queue.messages).toHaveLength(1);
+	});
+
+	it("keeps concurrent submissions of one URL deterministic", async () => {
+		const db = new FakeD1();
+		const queue = new FakeQueue();
+		const firstBody = JSON.stringify({ update_id: 15, message: { chat: { id: 42 }, text: "https://example.com/concurrent" } });
+		const secondBody = JSON.stringify({ update_id: 16, message: { chat: { id: 42 }, text: "https://example.com/concurrent#fragment" } });
+		const responses = await Promise.all([
+			worker.fetch(new Request("https://example.com/telegram", telegramInit(firstBody)), { ...env, DB: db, JOBS_QUEUE: queue }),
+			worker.fetch(new Request("https://example.com/telegram", telegramInit(secondBody)), { ...env, DB: db, JOBS_QUEUE: queue }),
+		]);
+		const payloads = await Promise.all(responses.map((response) => response.json()));
+		expect(db.jobs.size).toBe(1);
+		expect(queue.messages).toHaveLength(1);
+		expect(payloads.some((payload) => payload.queued?.length === 1)).toBe(true);
+		expect(payloads.some((payload) => payload.duplicates?.length === 1)).toBe(true);
+	});
+
 	it("ignores obvious private or local URLs", async () => {
 		const body = JSON.stringify({ update_id: 13, message: { text: "http://127.0.0.1/admin http://localhost/test http://192.168.1.2/" } });
 		const response = await request("/telegram", telegramInit(body));

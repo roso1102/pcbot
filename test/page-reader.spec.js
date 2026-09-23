@@ -32,6 +32,18 @@ describe("TinyFish page reader", () => {
 		await expect(readPage("https://example.com", { TINYFISH_API_KEY: "tinyfish-test" }, mockFetch(new Response("busy", { status: 429 })))).rejects.toMatchObject({ code: "tinyfish_http_429", retryable: true });
 	});
 
+	it("classifies TinyFish timeouts and server errors as retryable", async () => {
+		const timeout = new Error("aborted");
+		timeout.name = "AbortError";
+		await expect(readPage("https://example.com", { TINYFISH_API_KEY: "tinyfish-test" }, async () => { throw timeout; })).rejects.toMatchObject({ code: "timeout", retryable: true });
+		await expect(readPage("https://example.com", { TINYFISH_API_KEY: "tinyfish-test" }, mockFetch(new Response("busy", { status: 503 })))).rejects.toMatchObject({ code: "tinyfish_http_503", retryable: true });
+	});
+
+	it("classifies Firecrawl fallback failures as retryable", async () => {
+		let call = 0;
+		await expect(readPage("https://example.com", { TINYFISH_API_KEY: "tinyfish-test", FIRECRAWL_API_KEY: "firecrawl-test" }, async () => call++ === 0 ? new Response("busy", { status: 503 }) : new Response("busy", { status: 429 }))).rejects.toMatchObject({ code: "firecrawl_http_429", retryable: true });
+	});
+
 	it("repairs common mojibake and removes LinkedIn UI noise", () => {
 		const cleaned = cleanForGemini("JosÃ© â€“ event â€™26\nLike\nComment\nView Profile\n[Event page](https://example.com/event)\n#launch");
 		expect(cleaned).toContain("José – event ’26");
