@@ -1,34 +1,246 @@
 # Action Plan
 
-This plan is ordered to reduce migration risk. Complete each phase's acceptance criteria before moving on. The existing Apps Script code remains available for rollback; the Worker webhook is active after the initial migration test.
+## Roadmap from 2026-09-24: a hosted bot anyone can join
 
-## Current progress (2026-09-19)
+Goal: a non-technical person opens a setup page, connects Google, adds one shared Telegram bot to a group or starts a private chat, and begins sending links. The operator deploys updates once; users do not run commands, manage Cloudflare, edit Apps Script, or replace secrets. Each person's data and Sheet remain separate.
 
-- Phase 1: complete locally and deployed. `/health` and secret-protected `/telegram` are covered by 8 passing tests.
-- Phase 2: complete. The public `/health` endpoint was verified after deployment.
-- Phase 3: complete for current processing scope. `TELEGRAM_WEBHOOK_SECRET`, `TINYFISH_API_KEY`, `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_ALLOWED_CHAT_IDS` are configured. Firecrawl remains intentionally disabled without its key.
-- Phase 4: complete. D1 `telegram-link-bot-db` is bound as `DB`; migration `0001_initial.sql` created and remotely verified `jobs` and `errors`.
-- Phase 5: infrastructure complete. Both Queues exist, bindings and retry/DLQ settings are deployed, and the temporary consumer guard retries messages until the real processor is implemented.
-- Phase 6: complete for the first end-to-end path. Intake persisted a Telegram URL in D1 and published a Queue job.
-- Phase 7: complete for the first end-to-end path. TinyFish successfully read the LinkedIn short URL; Firecrawl remains optional and disabled.
-- Phase 8: complete for the first end-to-end path. Groq GPT-OSS 120B is now the deployed primary extractor; Gemini remains available only as an explicit opt-in.
-- Telegram status notifications are implemented and require `TELEGRAM_BOT_TOKEN`; successful jobs report the Groq summary, normalized tags, author/date/event, and source. Group allowlisting remains optional but recommended.
-- Integration audit found and fixed two blockers: TinyFish Fetch responses use `results[0].text`, and Gemini REST structured output uses `response_mime_type`/`response_schema`. The fixes are tested locally; redeploy and a disposable end-to-end job are required.
-- The summary/hashtag notification patch passes local tests and dry-run; deploy it before live verification.
-- Group UX now uses one Telegram progress message that is edited through queued, reading, extracting, and final states. Telegram draft streaming remains private-chat-only; this staged edit flow is the group-compatible behavior.
-- Google Sheets persistence is implemented locally: a compact Links row, URL-hash idempotency check, D1 row-number tracking, and Telegram row-number reporting. The Links Action dropdown now supports signed Archive/Delete synchronization with D1.
-- The bridge now maintains a main data tab plus automatically created `Status` and `Failures` tabs. Status is upserted per job; failure records are deduplicated by job/attempt/code.
-- Next: verify extracted `result_json`, test duplicates/rate limits/blocked pages and DLQ behavior, then complete Google Sheets persistence. Calendar/reminder integration is deferred until the Sheet workflow is reliable.
+This roadmap starts from the **working single-user Worker**. The older Phases 1–11 below are a historical migration checklist, not instructions to repeat webhook cutover. Some of their status notes were written before later deployments and are stale. The current code uses TinyFish, Groq GPT-OSS 120B, D1, Queues, a signed Apps Script bridge, and a live Worker webhook. Calendar and reminders remain deferred.
+
+### Product decisions for this roadmap
+
+- [ ] Run one centrally managed Worker, Queue, D1 database, and Telegram bot for the hosted service. Keep staging separate from production.
+- [ ] Treat a **workspace** as the isolation and billing/usage boundary. A workspace owns its connected Telegram chats, Google connection, Sheet, jobs, and settings. Start with one owner; add member roles only when collaboration requires them.
+- [ ] Use centrally managed TinyFish/Groq credentials initially. Users do not provide provider keys. Track usage per workspace and enforce service limits.
+- [ ] Use Google sign-in and a user-authorized Sheet connection for hosted users. Keep the existing Apps Script bridge for the current personal installation during transition.
+- [ ] Keep the existing personal bot running independently until a pilot workspace completes the entire flow. Migrate the existing owner's data only with a tested, reversible mapping.
+- [ ] Deliver updates through central deployments with versioned database and Sheet migrations. A self-hosted installer can be offered later, but it is not on the path to effortless updates.
+- [ ] Decide explicitly before Phase 17 whether edits made directly in Sheets must sync automatically, or whether users will edit/archive/delete through the web app or bot. Google Sheets writes alone do not provide the existing Apps Script `onEdit` behavior.
+
+### Hosted-service definition of done
+
+- [ ] A new person can finish setup without a terminal, Cloudflare account, API key, chat ID, Apps Script editor, or manual webhook command.
+- [ ] The person can connect a private chat or a group, connect or create a Sheet, submit a URL, receive progress and a final result, and see exactly one matching Sheet row.
+- [ ] Two workspaces can submit the same URL independently without sharing jobs, Sheet rows, errors, settings, or notifications.
+- [ ] Connection loss, provider limits, duplicate delivery, retries, and queue replay have understandable outcomes and do not silently lose or duplicate records.
+- [ ] Existing personal-bot records, Sheet actions, and webhook continue to work throughout the pilot; a documented migration or continued coexistence is chosen before launch.
+- [ ] A production update, migration, staged rollout, and rollback are rehearsed without requiring any end-user action.
+
+### Phase 12 — Baseline and harden the existing bot
+
+Build:
+
+- [x] Record the actual deployed version, Git commit, current D1 schema, queue/DLQ settings, secret names, and Google bridge version. Correct stale status claims in the historical documentation.
+- [ ] Exercise the current end-to-end flow with a disposable Sheet: link intake, duplicate, website/article/grant extraction, Save edits, Archive, Restore, Delete, and a failed-job retry.
+- [ ] Define a stable job state machine and the source of truth for Sheets versus `jobs.result_json`. Decide how to reconcile a D1 success followed by a Sheet or Telegram failure.
+- [ ] Implement safe, audited DLQ inspection/replay and alerts for stuck jobs. Ensure a replay cannot create a second Sheet row or notify the wrong chat.
+- [ ] Set explicit retention periods for raw Telegram messages, job results, errors, deletion audit records, and logs; implement cleanup only after backup and deletion behavior are tested.
+- [ ] Capture a baseline for expected latency, provider cost per link, Queue backlog, and typical links per user.
+
+Tests and evidence:
+
+- [ ] Unit/integration tests for duplicate Telegram updates, duplicate URLs, concurrent submissions, queue redelivery, provider 429/5xx/timeouts, invalid model output, and partial Sheet writes.
+- [ ] Staging test of retry exhaustion into the DLQ and one controlled replay; compare D1 job, Sheet row, and Telegram notifications before/after.
+- [ ] Restore a disposable D1 copy and verify a representative job and action history; retain a restore runbook.
+- [x] Run `npm test -- --run`, `npx wrangler deploy --dry-run`, and a live staging smoke test. Current evidence: 37 tests passed and the dry-run exposes the expected D1/Queue/provider bindings; remaining gaps are listed below.
+
+Exit gate: the current path is reliable enough to serve as a behavior reference, with documented failure recovery and no unexplained duplicate rows.
+
+### Phase 13 — Add workspace ownership without changing current behavior
+
+Build:
+
+- [ ] Create versioned D1 migrations for `workspaces`, `users`, `workspace_members`, `telegram_connections`, `google_connections`, and workspace settings. Give the current installation an owner workspace.
+- [ ] Add `workspace_id` to jobs, errors, deletion audit, and any new status/replay records. Backfill existing records into the owner workspace, validate counts, then make ownership required for new writes.
+- [ ] Replace global URL uniqueness with a workspace-scoped key such as `(workspace_id, url_hash)` while retaining Telegram update idempotency within the correct bot/chat context. Define how a deleted or archived URL can be resubmitted.
+- [ ] Resolve workspace identity from an authenticated account or registered Telegram chat at intake. Queue consumers load ownership from D1 and verify any workspace hint; never trust a user-supplied workspace ID.
+- [ ] Put ownership checks on every read/write path: intake, Queue, Sheet sync, actions, status, admin/replay, and exports. Use a single authorization helper and scoped query patterns.
+- [ ] Use additive migrations and dual-compatible code while the old Worker still runs. Prepare a rollback that leaves existing records readable; do not rely on reversing a destructive migration.
+
+Tests and evidence:
+
+- [ ] Migration tests against a copy of the current schema/data; verify row counts, indexes, uniqueness, and rollback/read compatibility.
+- [ ] Two-workspace tests for the same URL, same Telegram update ID, concurrent enqueue, and Queue redelivery.
+- [ ] Attempt cross-workspace reads, edits, archive/restore, deletion, export, and DLQ replay; every attempt must be denied without leaking metadata.
+- [ ] Confirm the original owner's bot and Sheet still behave the same after migration.
+
+Exit gate: every record has an owner, every path enforces it, and the current personal installation remains usable.
+
+### Phase 14 — Build a simple account and setup page
+
+Build:
+
+- [ ] Create a small hosted setup page with Google sign-in, secure session handling, a workspace dashboard, and a clear setup checklist: Google Sheet, Telegram, test link, ready.
+- [ ] Let the signed-in owner create a workspace, view connection status, choose/change a Sheet, disconnect services, and see recent jobs/errors without internal codes.
+- [ ] Require fresh authentication for sensitive account actions and validate redirect targets, CSRF/state values, session expiry, and account-to-workspace ownership.
+- [ ] Show actual next actions in plain language, e.g. “Connect Google Sheet” or “Add bot to Telegram group”; do not ask users to copy IDs or secrets.
+- [ ] Provision staging identities and test workspaces separately from production.
+
+Tests and evidence:
+
+- [ ] Auth/session tests for login, logout, expired sessions, CSRF/state mismatch, wrong workspace, and direct access to another user's setup page.
+- [ ] Usability test: one person unfamiliar with Cloudflare can navigate to the “connect” steps without help or a command line.
+- [ ] Accessibility/mobile checks for the setup flow and error recovery screens.
+
+Exit gate: a new user can create a workspace and understand what remains to connect without operator help.
+
+### Phase 15 — Link Telegram chats to workspaces
+
+Build:
+
+- [ ] Use one shared Telegram bot. Generate a short-lived, single-use connection token in the setup page; support Telegram private-chat `start` and group `startgroup` links or an equivalent `/connect` command.
+- [ ] Confirm the chat ID and the connecting Telegram user's authority before binding a group. Expire and consume tokens; prevent one chat from being silently claimed by another workspace.
+- [ ] Decide the group privacy/admin requirements and explain them during onboarding. Handle bot removal, group migration, renamed groups, duplicate setup attempts, and reconnect.
+- [ ] Resolve workspace by registered chat ID for every incoming update, then apply workspace-specific settings and limits. Unknown chats receive a safe setup hint and cannot enqueue jobs.
+- [ ] Preserve rapid webhook acknowledgement and one edited progress message per job. Limit duplicate/retry notifications to the relevant chat.
+
+Tests and evidence:
+
+- [ ] Simulate private chat, group chat, expired/reused tokens, wrong user, unauthorized group, group migration, bot removal, and replayed Telegram updates.
+- [ ] Two groups in separate workspaces submit the same URL; verify independent jobs and notifications.
+- [ ] Live staging onboarding with a fresh Telegram account/group, without manually entering a chat ID.
+
+Exit gate: a non-technical user can connect a group or private chat through the setup page, and no unlinked chat can store data.
+
+### Phase 16 — Connect and provision Google Sheets without Apps Script setup
+
+Build:
+
+- [ ] Implement Google OAuth with the narrowest practical file access. Prefer app-created or user-selected files with per-file access where feasible; confirm the required scopes and any Google verification requirements before public release.
+- [ ] Let the user create a new Sheet or select an eligible existing Sheet in the setup page. Validate ownership/permission, store the spreadsheet ID per workspace, and initialize `Links`, `Status`, `Failures`, and `Archive` with headers, formatting, and a version marker.
+- [ ] Store refresh credentials encrypted with access controls separate from ordinary job data; support refresh, rotation, revoke/disconnect, and reconnect. Never put tokens in logs, Telegram, exports, or source control.
+- [ ] Replace the hosted path's single global signed Apps Script bridge with per-workspace Sheets API writes. Keep the bridge for the legacy personal bot until migration is proven.
+- [ ] Match records using a stable record key rather than a row number alone; reconcile after partial writes, row movement, and retries. Version and migrate Sheet layouts without overwriting user-entered cells.
+- [ ] Make a deliberate choice for direct Sheet edits: keep actions in the hosted web/bot interface initially, or add a bounded reconciliation mechanism for Sheet-side `action`/editable columns. Do not imply that direct Sheet edits sync automatically until implemented and tested.
+
+Tests and evidence:
+
+- [ ] Test consent cancellation, insufficient scope, wrong Sheet permission, expired/revoked token, refresh failure, and user reconnect.
+- [ ] Test fresh Sheet creation and an existing Sheet with user data; verify no unrelated tabs/rows are altered.
+- [ ] Inject timeouts immediately before/after a Sheet append and re-run the same Queue job; exactly one row must remain, with correct D1 linkage.
+- [ ] Two users connect different Sheets and process the same URL; verify complete isolation.
+- [ ] Manually inspect the resulting Sheet on desktop and mobile with a non-technical pilot user.
+
+Exit gate: a user can authorize a Sheet through the browser and see reliable records without opening Apps Script.
+
+### Phase 17 — Preserve editing, archive, restore, and export workflows
+
+Build:
+
+- [ ] Give users simple web or Telegram actions to edit title, summary, note, type, deadline, and tags; Archive, Restore, Delete; and retry a failed link. Keep D1 JSON, Sheet row, and Telegram responses consistent.
+- [ ] Decide and document direct-in-Sheet edit behavior. If required, build scheduled/notification-based reconciliation with a visible “Save edits” state, conflict rules, bounded polling, and clear sync timestamps. If not, remove misleading Sheet action controls from hosted Sheets and route users to the app.
+- [ ] On restore, append or place the record in the next safe `Links` row even if its old row was reused. On delete, retain a scoped audit record according to the retention policy and allow deliberate resubmission.
+- [ ] Add per-workspace JSON/CSV export and full account deletion requests; make the resulting state visible to the owner.
+- [ ] Keep Calendar/reminders out of this phase; retain extracted event fields for a later opt-in feature.
+
+Tests and evidence:
+
+- [ ] Edit a saved record, archive it, add a new link, then restore the old record; verify no row is overwritten or duplicated.
+- [ ] Retry each action after a simulated Sheets failure and after a repeated click; verify idempotent results and helpful messages.
+- [ ] Verify exports contain only the requesting workspace's records; account deletion and retention tests remove or preserve exactly what policy says.
+- [ ] If direct Sheet edits are supported, test simultaneous web/Sheet edits and the documented conflict rule.
+
+Exit gate: hosted users can manage records as easily as the current owner, and the chosen Sheet-edit behavior is truthful in the UI.
+
+### Phase 18 — Shared-service limits, provider reliability, and cost control
+
+Build:
+
+- [ ] Set workspace-level per-minute/day link limits, maximum URLs per message, page/prompt size, Queue concurrency, and provider timeout/retry budgets based on Phase 12 measurements.
+- [ ] Track requests, input/output tokens when available, provider cost estimates, and failure rates by workspace without exposing one workspace's usage to another.
+- [ ] Keep Groq as the primary extractor and TinyFish as the primary reader; define an operator-controlled fallback and circuit-breaker behavior for provider outages. Classify quota exhaustion separately from transient 429s.
+- [ ] Prevent one workspace's burst or malformed page from exhausting shared capacity. Communicate limits and retry time in plain language.
+
+Tests and evidence:
+
+- [ ] Burst/load tests with several workspaces, including one noisy workspace; verify fair progress and that provider quotas are respected.
+- [ ] Inject Groq/TinyFish quota exhaustion, timeout, invalid JSON, and blocked pages; verify bounded retries, correct DLQ behavior, and safe notifications.
+- [ ] Compare usage counters with provider bills/usage dashboards on a controlled test batch.
+
+Exit gate: expected traffic fits the budget and a single workspace cannot monopolize the service.
+
+### Phase 19 — Operations, support, privacy, and recovery
+
+Build:
+
+- [ ] Add an operator dashboard for Queue depth, stuck/failed jobs, DLQ, provider failures, OAuth reconnects, and per-workspace usage. Restrict admin actions and record who replayed or changed a job.
+- [ ] Send actionable alerts for repeated job failures, provider outage, Sheets auth loss, backlog, and failed migrations. Keep user-facing errors specific but free of internal details.
+- [ ] Implement export, disconnect, account deletion, and retention requests end to end. Publish privacy/terms pages before inviting public users; identify which page content goes to TinyFish and Groq.
+- [ ] Document incident response, credential rotation, D1 recovery, Sheet reconciliation, support contact, and restoration after a bad release.
+
+Tests and evidence:
+
+- [ ] Trigger each alert in staging and confirm recipient, message, and recovery instructions.
+- [ ] Attempt an unauthorized admin replay and a cross-workspace support lookup; both must fail and be audited.
+- [ ] Restore a staging D1 copy and reconnect a Sheet; verify representative records and explain any expected loss window.
+- [ ] Test account deletion/export and check logs, Queue messages, and backups against the documented retention policy.
+
+Exit gate: an operator can diagnose and recover a failed workspace without reading another user's data or manually editing production rows.
+
+### Phase 20 — Central releases and a small non-technical pilot
+
+Build:
+
+- [ ] Use separate staging and production Cloudflare resources, bot credentials, OAuth clients, and Sheets. Build a release path: tests → additive migration → staging deployment → smoke test → pilot/canary → wider production rollout.
+- [ ] Use feature flags for new behavior and versioned D1/Sheet schemas. Keep old and new code compatible during each rollout; prepare a code rollback and data-forward recovery for migrations.
+- [ ] Recruit 3–5 people who did not build the bot. Observe setup completion, first successful link, errors, and support requests. Improve confusing steps before opening enrollment.
+- [ ] Decide whether the owner's existing personal bot stays separate or moves to the hosted service. If migrating, rehearse data/Sheet mapping on copies and record a rollback point before touching the live installation.
+- [ ] Deploy one visible improvement centrally and verify that every pilot user receives it without running a command or changing their Sheet script.
+
+Tests and evidence:
+
+- [ ] Full staging journey for each pilot: sign in → connect Telegram → connect Sheet → send link → edit/archive/restore → export/disconnect.
+- [ ] Migration rehearsal against a D1/Sheet copy; compare job counts, record keys, statuses, actions, and Sheet rows.
+- [ ] Canary rollback drill after a deliberately bad test release; verify no job loss or cross-workspace notification.
+- [ ] Pilot success measures: setup completion rate, time to first saved link, duplicate rate, failure/recovery rate, support requests, and per-user cost. Set thresholds before wider launch.
+
+Exit gate: pilot users can operate without technical help, data remains isolated, and one central update reaches them safely.
+
+### Phase 21 — Public availability (after pilot gates)
+
+- [ ] Complete any Google OAuth app publication/verification required for the chosen scopes, final privacy/terms/support pages, and a clear consent explanation.
+- [ ] Set service limits, abuse handling, incident contact, and an operator capacity budget. Add payment/billing only if the business model requires it.
+- [ ] Open registration gradually and monitor onboarding, Queue lag, provider errors, Sheet writes, and per-workspace cost. Pause new signups if capacity or recovery targets are missed.
+- [ ] Schedule Calendar/reminders as a separate opt-in project after the link-saving product is stable.
+
+Exit gate: a user can join and receive future improvements without technical setup, while the operator can measure and recover the service.
+
+### Shared test and release checklist for Phases 12–21
+
+- [ ] Unit tests cover new logic; integration tests cover D1, Queue, Telegram, and Sheets boundaries affected by the phase.
+- [ ] Every phase has at least one negative test for authorization/isolation and one retry or partial-failure test where external writes are involved.
+- [ ] Run `npm test -- --run` and `npx wrangler deploy --dry-run`; record staging smoke-test evidence and the deployed commit for releases.
+- [ ] Review migrations against a copy of current data; review changes for credentials, private content, and unbounded provider costs.
+- [ ] Confirm the personal bot still works until a separately reviewed migration or retirement decision.
+
+Implementation references: [Telegram bot deep links](https://core.telegram.org/bots/features#deep-linking), [Google Sheets OAuth scopes](https://developers.google.com/workspace/sheets/api/scopes), [Cloudflare D1 migrations](https://developers.cloudflare.com/d1/reference/migrations/), and [Cloudflare D1 recovery](https://developers.cloudflare.com/d1/reference/time-travel/). Recheck each provider's current requirements when its phase starts.
+
+## Historical single-user migration plan (Phases 1–11)
+
+The sections below record how this installation was built. Their “Next” notes are historical; the checkboxes below have been reconciled against the live deployment on 2026-09-24. Use Phases 12–21 above for new work.
+
+## Current progress (2026-09-24)
+
+- Phase 1–2: complete and deployed. `/health` and secret-protected `/telegram` are routed, tested, and the public health endpoint has been verified.
+- Phase 3: current Worker secrets/vars are configured for Telegram, TinyFish, Groq, the Sheets bridge, and the allowlist. Gemini remains an explicit opt-in; Firecrawl is intentionally disabled until its key is provided. Secret values are not stored in this repository.
+- Phase 4: D1 `telegram-link-bot-db` is bound as `DB`; migrations `0001_initial.sql` through `0004_lifecycle_actions.sql` are applied remotely. Jobs, errors, sheet metadata, lifecycle state, and deletion audit fields are present.
+- Phase 5: `telegram-link-jobs` and `telegram-link-jobs-dlq` exist with deployed producer/consumer bindings, bounded retries, and DLQ configuration.
+- Phase 6: Telegram intake is live. URL extraction/normalization, allowlisting, deduplication, Queue publication, progress updates, and duplicate responses have been exercised end to end. The Worker webhook is active; the old Apps Script webhook remains available only as rollback code.
+- Phase 7: TinyFish is the primary page reader; Firecrawl remains an optional fallback. UTF-8 cleanup, UI-noise cleanup, response-size limits, and controlled provider errors are implemented.
+- Phase 8: Groq `openai/gpt-oss-120b` is the deployed primary extractor. Strict schema mode falls back to JSON Object Mode and normalizes partial output; websites, grants, competitions, events, tools, articles, and other reference pages are classified. Gemini remains opt-in.
+- Phase 9: Google Sheets bridge is live with `Links`, `Status`, `Failures`, and `Archive` tabs, URL-hash idempotency, row tracking, signed Save edits/Archive/Restore/Delete actions, dropdown types, deadline/tags fields, and formatted Telegram results. The latest Apps Script bridge code and trigger still need a final manual verification in the Sheet.
+- Phase 10–11: automated tests cover the core duplicate, provider, schema, and sheet-action paths; the production Telegram webhook has been switched and successful jobs have been observed. Full DLQ replay, retention, alerting, provider-outage, and rollback drills remain open.
+- Deployment evidence: Worker version `a9009bee-0b29-440b-b720-537764061b5d`, Git commit `e632576`, D1 database `ff71f2d7-cd58-4122-aa9e-ef24c65c5733`, queues `telegram-link-jobs`/`telegram-link-jobs-dlq`, and deployed consumer settings are recorded from the current configuration.
+- Calendar/reminder integration remains intentionally deferred. The next gate is to verify the current Sheets bridge manually, then complete operational/recovery evidence before starting the hosted multi-workspace roadmap above.
 
 ## Definition of done
 
-- [ ] Authenticated Telegram updates containing URLs are accepted exactly once.
-- [ ] URLs are normalized and duplicate work is prevented.
-- [ ] Durable job/error state exists in D1.
-- [ ] Page reading uses TinyFish as primary; Firecrawl is optional fallback and remains disabled without its key.
-- [ ] Gemini output is schema-validated before persistence.
-- [ ] Google Sheets rows are idempotent. Calendar/reminder integration is explicitly deferred.
-- [ ] Users receive useful Telegram status messages without credential or internal-error leakage.
+- [x] Authenticated Telegram updates containing URLs are accepted exactly once.
+- [x] URLs are normalized and duplicate work is prevented.
+- [x] Durable job/error state exists in D1.
+- [x] Page reading uses TinyFish as primary; Firecrawl is optional fallback and remains disabled without its key.
+- [x] The configured extractor output is schema-validated before persistence (Groq primary; Gemini opt-in).
+- [x] Google Sheets rows are idempotent. Calendar/reminder integration is explicitly deferred.
+- [x] Users receive useful Telegram status messages without credential or internal-error leakage.
 - [ ] Queue retries, the dead-letter queue, rate limits, blocked pages, and provider outages are tested.
 - [ ] Operational logs identify a request/job across services.
 - [ ] The production webhook is switched only after migration approval, with a tested rollback path.
@@ -63,7 +275,7 @@ Tasks:
 - [x] Verify `GET https://telegram-link-bot.pcbot.workers.dev/health`.
 - [x] Send authenticated and unauthenticated synthetic requests to `/telegram` without altering Telegram's webhook.
 - [ ] Inspect `npx wrangler tail telegram-link-bot` for structured, redacted logs.
-- [ ] Record deployed commit SHA, deployment time, and smoke-test evidence.
+- [x] Record deployed commit SHA, deployment time, and smoke-test evidence.
 
 Acceptance criteria:
 
@@ -71,7 +283,7 @@ Acceptance criteria:
 - [x] Unknown routes return `404`; incorrect methods return `405`.
 - [x] A synthetic valid Telegram fixture is acknowledged.
 - [x] Authentication failure is visible as a safe status code and does not leak either token.
-- [x] Apps Script continues serving production traffic unchanged.
+- [x] The legacy Apps Script implementation remains available as rollback code after the Worker cutover.
 
 ## Phase 3 — Add Cloudflare secrets
 
@@ -91,7 +303,7 @@ Add `GOOGLE_SHEETS_BRIDGE_URL`, `GOOGLE_SHEETS_BRIDGE_SECRET`, and `TELEGRAM_ALL
 Tasks and safety checks:
 
 - [x] Use high-entropy, independently generated webhook secret material.
-- [ ] Use a dedicated Apps Script bridge with a narrow shared secret.
+- [x] Use a dedicated Apps Script bridge with a narrow shared secret.
 - [ ] Keep the bridge restricted to the target Sheet. Calendar access is deferred.
 - [ ] Create a redacted `.dev.vars.example` if local development needs documentation.
 - [x] Confirm `.dev.vars*` and `.env*` remain ignored except explicit example files.
@@ -100,8 +312,8 @@ Tasks and safety checks:
 
 Acceptance criteria:
 
-- [ ] Required bindings are visible to the deployed Worker by name, with values never returned or logged.
-- [ ] Missing-secret behavior is a controlled configuration error.
+- [x] Required bindings are visible to the deployed Worker by name, with values never returned or logged.
+- [x] Missing-secret behavior is a controlled configuration error.
 - [ ] A test credential can be rotated without a code change.
 
 ## Phase 4 — Create D1 and the `jobs`/`errors` tables
@@ -132,19 +344,19 @@ Minimum `errors` design:
 
 Tasks:
 
-- [ ] Define a deterministic URL-normalization policy before creating the uniqueness rule.
-- [ ] Define whether resubmission after completion is blocked forever or allowed after a window.
-- [ ] Add indexes for status/created time, Telegram update lookup, and URL deduplication.
-- [ ] Apply migrations locally first, then remotely with an explicit `--remote` operation.
-- [ ] Test insert, duplicate update, duplicate normalized URL, state transitions, and error history.
-- [ ] Never store Telegram bot tokens, API keys, full auth headers, or Google private keys in D1.
+- [x] Define a deterministic URL-normalization policy before creating the uniqueness rule.
+- [x] Define whether resubmission after completion is blocked forever or allowed after a window.
+- [x] Add indexes for status/created time, Telegram update lookup, and URL deduplication.
+- [x] Apply migrations locally first, then remotely with an explicit `--remote` operation.
+- [x] Test insert, duplicate update, duplicate normalized URL, state transitions, and error history.
+- [x] Never store Telegram bot tokens, API keys, full auth headers, or Google private keys in D1.
 
 Acceptance criteria:
 
 - [x] Migrations are versioned, reproducible, and reviewed.
-- [ ] Telegram retries cannot create two jobs.
+- [x] Telegram retries cannot create two jobs.
 - [ ] Concurrent submissions of the same normalized URL have deterministic behavior.
-- [ ] Job state transitions and error records are queryable by job ID.
+- [x] Job state transitions and error records are queryable by job ID.
 - [x] Production database identifier/binding is committed, but no credential is.
 
 ## Phase 5 — Create Queue and dead-letter Queue
@@ -161,46 +373,46 @@ Tasks:
 - [x] Add producer binding `JOBS_QUEUE` in `wrangler.jsonc`.
 - [x] Add a consumer for `telegram-link-jobs` with conservative batch size/retry settings.
 - [x] Configure `telegram-link-jobs-dlq` as the dead-letter queue.
-- [ ] Define a versioned, minimal Queue message contract: `jobId`, schema version, and correlation ID.
-- [ ] Load job details from D1 rather than duplicating sensitive payloads in Queue messages.
-- [ ] Make the consumer idempotent and safe under at-least-once delivery.
-- [ ] Record an `errors` row per failed stage/attempt, with redaction.
+- [x] Define a versioned, minimal Queue message contract: `jobId`, schema version, and correlation ID.
+- [x] Load job details from D1 rather than duplicating sensitive payloads in Queue messages.
+- [x] Make the consumer idempotent and safe under at-least-once delivery.
+- [x] Record an `errors` row per failed stage/attempt, with redaction.
 - [ ] Document replay/manual-resolution behavior for DLQ messages.
 
 Acceptance criteria:
 
-- [ ] Intake atomically or recoverably coordinates the D1 job and Queue publish.
-- [ ] Re-delivery does not duplicate downstream writes.
+- [x] Intake atomically or recoverably coordinates the D1 job and Queue publish.
+- [x] Re-delivery does not duplicate downstream writes.
 - [x] Retryable failures retry with bounded attempts/backoff.
 - [ ] Exhausted messages reach the DLQ and the job becomes `dead_letter`.
-- [ ] A successful message is acknowledged only after durable state is updated.
+- [x] A successful message is acknowledged only after durable state is updated.
 
-## Phase 6 — Connect Telegram intake (without production cutover)
+## Phase 6 — Connect Telegram intake
 
-Implementation status: local code complete; deployment and remote end-to-end verification are pending.
+Implementation status: deployed and exercised end to end. The production webhook cutover is documented in Phase 11.
 
 Tasks:
 
-- [ ] Enforce webhook secret validation and optional chat/user allowlist.
+- [x] Enforce webhook secret validation and optional chat/user allowlist.
 - [x] Extract all supported URL entities and plain-text URLs.
 - [x] Permit only `http:` and `https:` URLs.
 - [x] Normalize host casing, fragments, and default ports. Tracking-parameter policy remains to be finalized.
 - [x] Reject obvious localhost, private, and link-local hosts at intake; redirect-target validation remains a consumer responsibility.
 - [x] Persist/enqueue each accepted URL idempotently.
-- [ ] Send concise responses for accepted, duplicate, unsupported, and failed submissions.
-- [x] Test through fixtures with fake D1/Queue bindings; leave the existing production webhook unchanged.
+- [x] Send concise responses for accepted, duplicate, unsupported, and failed submissions.
+- [x] Test through fixtures with fake D1/Queue bindings; production cutover is tracked separately in Phase 11.
 
 Acceptance criteria:
 
-- [ ] The same `update_id` is harmless when delivered repeatedly.
-- [ ] The same normalized URL produces the documented duplicate response.
-- [ ] Unauthorized chats cannot enqueue work.
-- [ ] Intake remains fast when downstream providers are unavailable.
-- [ ] No production Telegram traffic has moved from Apps Script.
+- [x] The same `update_id` is harmless when delivered repeatedly.
+- [x] The same normalized URL produces the documented duplicate response.
+- [x] Unauthorized chats cannot enqueue work.
+- [x] Intake remains fast when downstream providers are unavailable.
+- [x] Production Telegram traffic has moved to the Worker; the old Apps Script webhook remains retained for rollback.
 
 ## Phase 7 — Add TinyFish page reading
 
-Implementation status: TinyFish Fetch provider layer complete locally; provider is wired into the local Queue processor. Remote smoke test is pending. Firecrawl fallback is retained but disabled unless its key exists.
+Implementation status: TinyFish Fetch provider layer is deployed and used by the Queue processor. Firecrawl fallback is retained but disabled unless its key exists.
 
 Tasks:
 
@@ -210,7 +422,7 @@ Tasks:
 - [x] Set strict total timeouts and response-size limits; redirect-target validation remains required in the consumer.
 - [ ] Revalidate every redirect target against the SSRF policy.
 - [x] Record provider name, status, latency, and redacted failure code in the provider result/error model.
-- [ ] Avoid persisting full page bodies unless necessary; establish a retention policy first.
+- [x] Avoid persisting full page bodies unless necessary; establish a retention policy first.
 - [ ] Treat fetched instructions/scripts as untrusted data.
 
 Acceptance criteria:
@@ -220,9 +432,9 @@ Acceptance criteria:
 - [x] Oversized, empty, timeout-class, and `429` cases have controlled provider outcomes; binary and redirect cases remain processor integration tests.
 - [ ] Provider credentials and fetched private data are absent from logs.
 
-## Phase 8 — Add Gemini structured extraction
+## Phase 8 — Structured extraction (Groq primary; Gemini opt-in)
 
-Implementation status: local Gemini client and Queue processor complete; deployment and live-key verification are pending.
+Implementation status: Groq GPT-OSS 120B is deployed as the primary extractor. Gemini remains available only when explicitly selected.
 
 Extraction contract for each cleaned page:
 
@@ -237,7 +449,7 @@ Extraction contract for each cleaned page:
 Tasks:
 
 - [x] Define and version the output JSON schema before prompt implementation.
-- [x] Use `gemini-2.5-flash` as the default model, overridable with `GEMINI_MODEL`.
+- [x] Use `openai/gpt-oss-120b` as the deployed default model; Gemini `gemini-2.5-flash` remains an explicit opt-in.
 - [x] Request structured JSON and validate every response server-side.
 - [x] Include source URL and a bounded amount of page content.
 - [x] Defend against prompt injection by clearly treating page text as data.
@@ -247,29 +459,29 @@ Tasks:
 
 Acceptance criteria:
 
-- [ ] Valid pages yield schema-valid data.
-- [ ] Missing/ambiguous fields use explicit null/unknown values rather than invented facts.
-- [ ] Malformed model output is not written to Google destinations.
-- [ ] Rate limits and safety refusals have controlled, observable outcomes.
+- [x] Valid pages yield schema-valid data.
+- [x] Missing/ambiguous fields use explicit null/unknown values rather than invented facts.
+- [x] Malformed model output is not written to Google destinations.
+- [x] Rate limits and safety refusals have controlled, observable outcomes.
 - [ ] Test fixtures cover ordinary content, hostile instructions, sparse pages, and invalid output.
 
 ## Phase 9 — Connect Google Sheets (Calendar deferred)
 
 Tasks:
 
-- [ ] Use a dedicated bridge project with access only to the test Sheet initially.
-- [ ] Define a small, action-oriented main tab and keep technical fields out of the normal view.
-- [ ] Use the job ID or URL hash as an idempotency key for row writes.
-- [ ] Store the returned Sheet row identifier in D1.
-- [ ] Make retries update/reconcile the same Sheet row rather than create duplicates.
-- [ ] Send Telegram success/failure summaries only after durable state is recorded.
+- [x] Use a dedicated bridge project with access only to the test Sheet initially.
+- [x] Define a small, action-oriented main tab and keep technical fields out of the normal view.
+- [x] Use the job ID or URL hash as an idempotency key for row writes.
+- [x] Store the returned Sheet row identifier in D1.
+- [x] Make retries update/reconcile the same Sheet row rather than create duplicates.
+- [x] Send Telegram success/failure summaries only after durable state is recorded.
 
 Acceptance criteria:
 
-- [ ] A completed job creates exactly one expected Sheet row.
-- [ ] Retries and Queue redelivery do not create duplicate Sheet rows.
-- [ ] Partial Sheet failure is recoverable and observable.
-- [ ] Test Sheet and column mapping are verified manually.
+- [x] A completed job creates exactly one expected Sheet row.
+- [x] Retries and Queue redelivery do not create duplicate Sheet rows.
+- [x] Partial Sheet failure is recoverable and observable.
+- [ ] Test Sheet and latest Apps Script column/action mapping are verified manually.
 
 Implementation notes:
 
@@ -293,8 +505,8 @@ Run an evidence-backed migration test matrix:
 - [ ] Invalid, non-HTTP, private-network, and redirect-to-private URLs.
 - [ ] TinyFish timeout/`429`/`5xx`/blocked content.
 - [ ] Firecrawl fallback timeout/`429`/`5xx`/blocked content when enabled.
-- [ ] Gemini invalid JSON, schema mismatch, refusal, timeout, `429`, and `5xx`.
-- [ ] Groq fallback success, invalid JSON, timeout, `429`, and `5xx`.
+- [ ] Gemini (explicit opt-in) invalid JSON, schema mismatch, refusal, timeout, `429`, and `5xx`.
+- [ ] Groq primary success, strict-schema/JSON-object fallback, invalid JSON, timeout, `429`, and `5xx`.
 - [ ] Google Sheets auth failure, permission failure, quota limit, and partial write.
 - [ ] Telegram send failure and Telegram rate limit.
 - [ ] Queue redelivery, retry exhaustion, and DLQ arrival.
@@ -311,7 +523,7 @@ Acceptance criteria:
 - [ ] Alerts/operational queries identify stuck, failed, and dead-letter jobs.
 - [ ] Rollback procedure is rehearsed without touching the live webhook.
 
-## Phase 11 — Switch the Telegram webhook
+## Phase 11 — Switch the Telegram webhook (cutover completed; observation ongoing)
 
 This is the only phase authorized to change the production webhook, and it requires explicit migration approval.
 
@@ -319,18 +531,18 @@ Pre-cutover checklist:
 
 - [ ] Phases 1–10 meet their acceptance criteria.
 - [ ] Record the existing Apps Script webhook URL/configuration securely for rollback.
-- [ ] Confirm Worker health, D1 migrations, Queue consumer, DLQ, secrets, and Google permissions.
-- [ ] Confirm `TELEGRAM_WEBHOOK_SECRET` is configured in both Worker validation and webhook registration.
+- [x] Confirm Worker health, D1 migrations, Queue consumer, DLQ, secrets, and Google permissions.
+- [x] Confirm `TELEGRAM_WEBHOOK_SECRET` is configured in both Worker validation and webhook registration.
 - [ ] Choose a low-traffic window and name the operator/observer.
 - [ ] Prepare exact cutover, verification, and rollback commands without embedding the bot token in committed files or shared logs.
 - [ ] Decide how pending Apps Script work will be drained or reconciled.
 
 Cutover verification:
 
-- [ ] Switch the webhook to `https://telegram-link-bot.pcbot.workers.dev/telegram`.
-- [ ] Verify Telegram reports the expected webhook URL and no delivery error.
-- [ ] Submit a unique test URL and observe intake, Queue, extraction, Google outputs, and Telegram completion.
-- [ ] Submit the same URL/update behavior and verify deduplication.
+- [x] Switch the webhook to `https://telegram-link-bot.pcbot.workers.dev/telegram`.
+- [x] Verify Telegram reports the expected webhook URL and no delivery error.
+- [x] Submit a unique test URL and observe intake, Queue, extraction, Google outputs, and Telegram completion.
+- [x] Submit the same URL/update behavior and verify deduplication.
 - [ ] Monitor failures, latency, Queue backlog, DLQ, and provider limits during the observation window.
 - [ ] Keep Apps Script deployed but inactive until the observation period passes.
 
@@ -340,9 +552,9 @@ Rollback criteria:
 
 Final acceptance criteria:
 
-- [ ] Production end-to-end test passes.
+- [x] Production end-to-end test passes.
 - [ ] Monitoring remains healthy for the agreed observation period.
-- [ ] Rollback remains possible and documented.
+- [x] Rollback remains possible and documented.
 - [ ] Apps Script is retired only through a separate, explicit decision after migration acceptance.
 
 ## Pull-request checklist for every phase
