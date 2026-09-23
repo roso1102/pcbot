@@ -40,6 +40,7 @@ Tests and evidence:
 
 - [ ] Unit/integration tests for duplicate Telegram updates, duplicate URLs, concurrent submissions, queue redelivery, provider 429/5xx/timeouts, invalid model output, and partial Sheet writes.
 - [x] Focused Phase 12 tests cover admin authorization, DLQ state marking, replay idempotency, alert deduplication, and retention dry-run behavior (41 tests pass in total).
+- [x] Controlled replay of dead-letter job `12686598-ed58-4f54-ab25-392a7f7570a8` was audited and processed once; it ended with the expected TinyFish `empty_content` failure and produced no Sheet row. The job used synthetic chat ID `42`, so its Telegram `400` notification record is expected and not a production-chat failure.
 - [ ] Staging test of retry exhaustion into the DLQ and one controlled replay; compare D1 job, Sheet row, and Telegram notifications before/after.
 - [ ] Restore a disposable D1 copy and verify a representative job and action history; retain a restore runbook.
 - [x] Run `npm test -- --run`, `npx wrangler deploy --dry-run`, and a live staging smoke test. Current evidence: 41 tests passed and the dry-run exposes the expected D1/Queue/provider bindings; remaining gaps are listed below.
