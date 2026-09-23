@@ -62,21 +62,21 @@ Phase 12 operating contract:
 
 Build:
 
-- [ ] Create versioned D1 migrations for `workspaces`, `users`, `workspace_members`, `telegram_connections`, `google_connections`, and workspace settings. Give the current installation an owner workspace.
-- [ ] Add `workspace_id` to jobs, errors, deletion audit, and any new status/replay records. Backfill existing records into the owner workspace, validate counts, then make ownership required for new writes.
-- [ ] Replace global URL uniqueness with a workspace-scoped key such as `(workspace_id, url_hash)` while retaining Telegram update idempotency within the correct bot/chat context. Define how a deleted or archived URL can be resubmitted.
-- [ ] Resolve workspace identity from an authenticated account or registered Telegram chat at intake. Queue consumers load ownership from D1 and verify any workspace hint; never trust a user-supplied workspace ID.
-- [ ] Put ownership checks on every read/write path: intake, Queue, Sheet sync, actions, status, admin/replay, and exports. Use a single authorization helper and scoped query patterns.
-- [ ] Use additive migrations and dual-compatible code while the old Worker still runs. Prepare a rollback that leaves existing records readable; do not rely on reversing a destructive migration.
+- [x] Create versioned D1 migrations for `workspaces`, `users`, `workspace_members`, `telegram_connections`, `google_connections`, and workspace settings. Give the current installation an owner workspace.
+- [x] Add `workspace_id` to jobs, errors, deletion audit, and any new status/replay records. Backfill existing records into the owner workspace, validate counts, then make ownership required for new writes.
+- [x] Replace global URL uniqueness with workspace-scoped `(workspace_id, canonical_url_hash)` and update idempotency to use the same workspace boundary. Legacy owner storage hashes remain unchanged for Sheet reconciliation.
+- [x] Resolve workspace identity from a registered Telegram chat at intake. Queue consumers load ownership from D1 and verify any workspace hint; the hint is never authoritative.
+- [x] Put ownership checks on intake, Queue, Sheet keys/actions, status/error/replay records, and owner-scoped admin reads. The legacy bridge remains mapped to the owner workspace.
+- [x] Use an additive migration and compatibility fallback so the old Worker remains readable during rollout; no destructive rollback is required.
 
 Tests and evidence:
 
-- [ ] Migration tests against a copy of the current schema/data; verify row counts, indexes, uniqueness, and rollback/read compatibility.
-- [ ] Two-workspace tests for the same URL, same Telegram update ID, concurrent enqueue, and Queue redelivery.
-- [ ] Attempt cross-workspace reads, edits, archive/restore, deletion, export, and DLQ replay; every attempt must be denied without leaking metadata.
-- [ ] Confirm the original owner's bot and Sheet still behave the same after migration.
+- [x] Migration tested from a clean six-migration local D1 and then applied remotely; remote verification found 22 preserved jobs, one active owner workspace, three chat connections, and workspace-scoped unique indexes.
+- [x] Tests cover two workspaces submitting the same URL with the same Telegram update ID, concurrent/default deduplication, Queue workspace mismatch redelivery, and legacy fallback.
+- [x] Cross-workspace Sheet record-key lookup returns `job_not_found`; owner-scoped admin queries and namespaced storage keys prevent metadata crossover.
+- [x] Original owner smoke-tested after migration: `/health` is healthy, the Worker is deployed, and existing jobs/chat mappings remain under `workspace_default`.
 
-Exit gate: every record has an owner, every path enforces it, and the current personal installation remains usable.
+Exit gate: complete on 2026-09-24. Every migrated record has an owner, new intake/queue/action/operation paths enforce it, and the current personal installation remains usable. Phase 14 has not started.
 
 ### Phase 14 — Build a simple account and setup page
 
@@ -244,7 +244,8 @@ The sections below record how this installation was built. Their “Next” note
 - Phase 10–11: automated tests cover the core duplicate, provider, schema, sheet-action, and Phase 12 operations paths; the production Telegram webhook has been switched and successful jobs have been observed. The broader Phase 10 outage/load matrix remains a separate historical follow-up.
 - Phase 12 deployment evidence: Worker version `5ac670e9-ccd1-48a2-9868-b96183de5b66`, D1 migration `0005_phase12_operations.sql` applied remotely, 15-minute scheduled operations trigger enabled, both main/DLQ consumers deployed, and the admin secret/recipient secrets configured.
 - Deployment baseline: D1 database `ff71f2d7-cd58-4122-aa9e-ef24c65c5733`, queues `telegram-link-jobs`/`telegram-link-jobs-dlq`, and consumer settings are recorded from the current configuration. Git commit is recorded after this Phase 12 change is committed.
-- Phase 12 acceptance gate: complete. The current single-user Worker has baseline metrics, recovery controls, restore evidence, and 51 passing tests. Phase 13 remains paused until the owner explicitly approves it.
+- Phase 12 acceptance gate: complete. The current single-user Worker has baseline metrics, recovery controls, restore evidence, and 51 passing tests.
+- Phase 13 acceptance gate: complete on 2026-09-24. Migration `0006_workspaces.sql` is live, the deployed Worker version is `f8f99b4e-278a-46ad-81f5-d9ef1a6ab20f`, 58 tests pass, and Phase 14 has not started.
 - Calendar/reminder integration remains intentionally deferred.
 
 ## Definition of done

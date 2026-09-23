@@ -6,14 +6,14 @@ const recordKey = "a".repeat(64);
 
 class FakeActionDb {
 	constructor() {
-		this.job = { id: "job-1", status: "completed", record_state: "active", normalized_url: "https://example.com", url_hash: recordKey, result_json: '{"schemaVersion":1}' };
+		this.job = { id: "job-1", workspace_id: "workspace_default", status: "completed", record_state: "active", normalized_url: "https://example.com", url_hash: recordKey, result_json: '{"schemaVersion":1}' };
 		this.deleted = [];
 	}
 
 	prepare(sql) {
 		return {
 			bind: (...values) => ({
-				first: async () => sql.includes("SELECT id, status, record_state") ? (this.job?.url_hash === values[0] ? this.job : null) : null,
+				first: async () => sql.includes("SELECT id, workspace_id, status, record_state") ? (this.job?.url_hash === values[0] ? this.job : null) : null,
 				run: async () => {
 					if (sql.includes("UPDATE jobs SET record_state")) { this.job.record_state = sql.includes("record_state = 'active'") ? "active" : "archived"; return { meta: { changes: 1 } }; }
 					if (sql.includes("UPDATE jobs SET result_json")) { this.job.result_json = values[0]; this.job.user_note = values[1]; return { meta: { changes: 1 } }; }
@@ -70,5 +70,14 @@ describe("Sheet lifecycle actions", () => {
 	it("rejects unsigned actions", async () => {
 		const response = await worker.fetch(new Request("https://example.com/sheet-action", { method: "POST", body: "{}" }), { DB: new FakeActionDb(), GOOGLE_SHEETS_BRIDGE_SECRET: secret });
 		expect(response.status).toBe(401);
+	});
+
+	it("does not resolve a record key belonging to another workspace", async () => {
+		const db = new FakeActionDb();
+		db.job.url_hash = `workspace_other:${recordKey}`;
+		const body = await signEnvelope({ action: "archive", recordKey, requestedBy: "owner@example.com" });
+		const response = await worker.fetch(new Request("https://example.com/sheet-action", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), { DB: db, GOOGLE_SHEETS_BRIDGE_SECRET: secret });
+		expect(response.status).toBe(404);
+		expect(await response.json()).toEqual({ ok: false, error: "job_not_found" });
 	});
 });

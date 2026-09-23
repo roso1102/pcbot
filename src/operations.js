@@ -45,23 +45,27 @@ function actorFromRequest(request) {
 	return String(request.headers.get("X-Admin-Actor") ?? "operator").trim().slice(0, 200) || "operator";
 }
 
-async function recordOperationError(db, jobId, code, message, attemptNumber = 0) {
-	await db.prepare("INSERT INTO errors (job_id, stage, error_code, message, retryable, attempt_number) VALUES (?, 'operations', ?, ?, 0, ?)").bind(jobId, code, String(message).slice(0, 500), attemptNumber).run();
+async function recordOperationError(db, jobId, code, message, attemptNumber = 0, workspaceId = "workspace_default") {
+	try {
+		await db.prepare("INSERT INTO errors (job_id, stage, error_code, message, retryable, attempt_number, workspace_id) VALUES (?, 'operations', ?, ?, 0, ?, ?)").bind(jobId, code, String(message).slice(0, 500), attemptNumber, workspaceId).run();
+	} catch {
+		await db.prepare("INSERT INTO errors (job_id, stage, error_code, message, retryable, attempt_number) VALUES (?, 'operations', ?, ?, 0, ?)").bind(jobId, code, String(message).slice(0, 500), attemptNumber).run();
+	}
 }
 
-export async function listDeadLetterJobs(db, limit = 25) {
-	const result = await db.prepare("SELECT id, normalized_url, status, attempt_count, provider, updated_at, created_at FROM jobs WHERE status = 'dead_letter' ORDER BY updated_at DESC LIMIT ?").bind(Math.min(Math.max(Number(limit) || 25, 1), 100)).all();
+export async function listDeadLetterJobs(db, limit = 25, workspaceId = "workspace_default") {
+	const result = await db.prepare("SELECT id, workspace_id, normalized_url, status, attempt_count, provider, updated_at, created_at FROM jobs WHERE workspace_id = ? AND status = 'dead_letter' ORDER BY updated_at DESC LIMIT ?").bind(workspaceId, Math.min(Math.max(Number(limit) || 25, 1), 100)).all();
 	return result?.results ?? [];
 }
 
-export async function listStuckJobs(db, env = {}) {
+export async function listStuckJobs(db, env = {}, workspaceId = "workspace_default") {
 	const config = retentionConfig(env);
-	const result = await db.prepare("SELECT id, normalized_url, status, attempt_count, provider, updated_at, created_at FROM jobs WHERE status = 'processing' AND updated_at < datetime('now', ?) ORDER BY updated_at ASC LIMIT ?").bind(`-${config.stuckMinutes} minutes`, config.alertLimit).all();
+	const result = await db.prepare("SELECT id, workspace_id, normalized_url, status, attempt_count, provider, updated_at, created_at FROM jobs WHERE workspace_id = ? AND status = 'processing' AND updated_at < datetime('now', ?) ORDER BY updated_at ASC LIMIT ?").bind(workspaceId, `-${config.stuckMinutes} minutes`, config.alertLimit).all();
 	return result?.results ?? [];
 }
 
-async function recordAlert(db, alertKey, jobId, kind, message) {
-	const result = await db.prepare("INSERT OR IGNORE INTO job_alerts (alert_key, job_id, kind, message) VALUES (?, ?, ?, ?)").bind(alertKey, jobId ?? null, kind, String(message).slice(0, 500)).run();
+async function recordAlert(db, alertKey, job, kind, message) {
+	const result = await db.prepare("INSERT OR IGNORE INTO job_alerts (alert_key, job_id, kind, message, workspace_id) VALUES (?, ?, ?, ?, ?)").bind(alertKey, job?.id ?? null, kind, String(message).slice(0, 500), job?.workspace_id ?? "workspace_default").run();
 	return Boolean(result?.meta?.changes);
 }
 
@@ -71,7 +75,7 @@ function adminChatIds(env) {
 
 export async function sendAdminAlert(db, job, kind, message, env, fetchImpl = fetch) {
 	const alertKey = `${kind}:${job?.id ?? "global"}`;
-	if (!(await recordAlert(db, alertKey, job?.id ?? null, kind, message))) return { sent: false, duplicate: true };
+	if (!(await recordAlert(db, alertKey, job, kind, message))) return { sent: false, duplicate: true };
 	const chatIds = adminChatIds(env);
 	if (!env?.TELEGRAM_BOT_TOKEN || chatIds.length === 0) return { sent: false, configured: false };
 	const text = `⚠️ ${kind}\nJob: ${job?.id ?? "n/a"}${job?.normalized_url ? `\nURL: ${job.normalized_url}` : ""}\n${String(message).slice(0, 700)}`;
@@ -90,7 +94,7 @@ export async function markDeadLetterMessage(message, env, fetchImpl = fetch) {
 		message?.ack?.();
 		return { status: "ignored" };
 	}
-	const job = await env.DB.prepare("SELECT id, normalized_url, status, attempt_count, provider FROM jobs WHERE id = ?").bind(jobId).first();
+	const job = await env.DB.prepare("SELECT id, workspace_id, normalized_url, status, attempt_count, provider FROM jobs WHERE id = ?").bind(jobId).first();
 	if (!job) {
 		message?.ack?.();
 		return { status: "missing", jobId };
@@ -101,7 +105,7 @@ export async function markDeadLetterMessage(message, env, fetchImpl = fetch) {
 	}
 	if (job.status !== "completed" && job.status !== "dead_letter") {
 		await env.DB.prepare("UPDATE jobs SET status = 'dead_letter', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status <> 'completed'").bind(jobId).run();
-		await recordOperationError(env.DB, jobId, "dead_letter", "Queue delivery exhausted and moved to the dead-letter queue", job.attempt_count ?? 0);
+		await recordOperationError(env.DB, jobId, "dead_letter", "Queue delivery exhausted and moved to the dead-letter queue", job.attempt_count ?? 0, job.workspace_id);
 	}
 	await sendAdminAlert(env.DB, job, "dead_letter", "Queue delivery exhausted; review before replay.", env, fetchImpl);
 	message?.ack?.();
@@ -109,17 +113,21 @@ export async function markDeadLetterMessage(message, env, fetchImpl = fetch) {
 }
 
 export async function replayDeadLetterJob(jobId, requestedBy, reason, env) {
-	const job = await env.DB.prepare("SELECT id, normalized_url, status, attempt_count FROM jobs WHERE id = ?").bind(jobId).first();
+	const job = await env.DB.prepare("SELECT id, workspace_id, normalized_url, status, attempt_count FROM jobs WHERE id = ?").bind(jobId).first();
 	if (!job) return { ok: false, status: 404, error: "job_not_found" };
 	if (!["dead_letter", "failed"].includes(job.status)) return { ok: false, status: 409, error: "job_not_replayable", currentStatus: job.status };
 	const replayId = crypto.randomUUID();
-	await env.DB.prepare("INSERT INTO job_replays (id, job_id, previous_status, requested_by, reason) VALUES (?, ?, ?, ?, ?)").bind(replayId, job.id, job.status, String(requestedBy || "operator").slice(0, 200), String(reason || "manual replay").slice(0, 500)).run();
+	try {
+		await env.DB.prepare("INSERT INTO job_replays (id, job_id, previous_status, requested_by, reason, workspace_id) VALUES (?, ?, ?, ?, ?, ?)").bind(replayId, job.id, job.status, String(requestedBy || "operator").slice(0, 200), String(reason || "manual replay").slice(0, 500), job.workspace_id ?? "workspace_default").run();
+	} catch {
+		await env.DB.prepare("INSERT INTO job_replays (id, job_id, previous_status, requested_by, reason) VALUES (?, ?, ?, ?, ?)").bind(replayId, job.id, job.status, String(requestedBy || "operator").slice(0, 200), String(reason || "manual replay").slice(0, 500)).run();
+	}
 	await env.DB.prepare("UPDATE jobs SET status = 'queued', attempt_count = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(job.id).run();
 	try {
-		await env.JOBS_QUEUE.send({ version: 1, jobId: job.id, correlationId: job.id, replayId }, { contentType: "json" });
+		await env.JOBS_QUEUE.send({ version: 1, jobId: job.id, correlationId: job.id, replayId, workspaceId: job.workspace_id ?? "workspace_default" }, { contentType: "json" });
 	} catch (error) {
 		await env.DB.prepare("UPDATE jobs SET status = 'failed', updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(job.id).run();
-		await recordOperationError(env.DB, job.id, "replay_publish_failed", error?.message ?? "Replay Queue publish failed", job.attempt_count ?? 0);
+		await recordOperationError(env.DB, job.id, "replay_publish_failed", error?.message ?? "Replay Queue publish failed", job.attempt_count ?? 0, job.workspace_id);
 		return { ok: false, status: 503, error: "queue_unavailable" };
 	}
 	return { ok: true, status: 202, replayId, jobId: job.id };
@@ -143,8 +151,8 @@ export async function runRetention(db, env = {}, { dryRun = false } = {}) {
 	return { dryRun: false, config, counts };
 }
 
-export async function scanStuckJobs(env, fetchImpl = fetch) {
-	const jobs = await listStuckJobs(env.DB, env);
+export async function scanStuckJobs(env, fetchImpl = fetch, workspaceId = "workspace_default") {
+	const jobs = await listStuckJobs(env.DB, env, workspaceId);
 	const alerts = [];
 	for (const job of jobs) alerts.push(await sendAdminAlert(env.DB, job, "stuck_job", `Job has remained processing for more than ${retentionConfig(env).stuckMinutes} minutes.`, env, fetchImpl));
 	return { scanned: jobs.length, alerts };

@@ -7,8 +7,12 @@ import { editTelegramMessage, sendTelegramMessage } from "./telegram";
 // wrangler.jsonc configures max_retries=3, so a message can be processed four times total.
 const MAX_QUEUE_ATTEMPTS = 4;
 
-async function recordError(db, jobId, error) {
-	await db.prepare("INSERT INTO errors (job_id, stage, error_code, message, retryable, provider_status, attempt_number) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(jobId, error.stage ?? error.provider ?? "processor", error.code ?? "processor_error", String(error.message ?? "Processor failed").slice(0, 500), error.retryable ? 1 : 0, error.status ?? null, error.attemptNumber ?? 0).run();
+async function recordError(db, jobId, error, workspaceId = "workspace_default") {
+	try {
+		await db.prepare("INSERT INTO errors (job_id, stage, error_code, message, retryable, provider_status, attempt_number, workspace_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(jobId, error.stage ?? error.provider ?? "processor", error.code ?? "processor_error", String(error.message ?? "Processor failed").slice(0, 500), error.retryable ? 1 : 0, error.status ?? null, error.attemptNumber ?? 0, workspaceId).run();
+	} catch {
+		await db.prepare("INSERT INTO errors (job_id, stage, error_code, message, retryable, provider_status, attempt_number) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(jobId, error.stage ?? error.provider ?? "processor", error.code ?? "processor_error", String(error.message ?? "Processor failed").slice(0, 500), error.retryable ? 1 : 0, error.status ?? null, error.attemptNumber ?? 0).run();
+	}
 }
 
 export function formatSuccessMessage(url, extraction, sheetResult = null, extractor = "gemini") {
@@ -67,8 +71,14 @@ export async function processQueueMessage(message, env, fetchImpl = fetch) {
 		message.ack();
 		return;
 	}
-	const job = await env.DB.prepare("SELECT id, normalized_url, url_hash, chat_id, status, attempt_count, created_at, original_message, user_note, sender_name, sender_username FROM jobs WHERE id = ?").bind(body.jobId).first();
+	const job = await env.DB.prepare("SELECT id, workspace_id, canonical_url_hash, normalized_url, url_hash, chat_id, status, attempt_count, created_at, original_message, user_note, sender_name, sender_username FROM jobs WHERE id = ?").bind(body.jobId).first();
 	if (!job || job.status === "completed") {
+		message.ack();
+		return;
+	}
+	if (body.workspaceId && job.workspace_id && body.workspaceId !== job.workspace_id) {
+		const mismatch = Object.assign(new Error("Queue workspace does not match the stored job"), { code: "workspace_mismatch", stage: "workspace", retryable: false });
+		await recordError(env.DB, job.id, mismatch, job.workspace_id);
 		message.ack();
 		return;
 	}
@@ -91,7 +101,7 @@ export async function processQueueMessage(message, env, fetchImpl = fetch) {
 			} catch (geminiError) {
 				if (!env?.GROQ_API_KEY) throw geminiError;
 				geminiError.attemptNumber = (job.attempt_count ?? 0) + 1;
-				await recordError(env.DB, job.id, geminiError);
+				await recordError(env.DB, job.id, geminiError, job.workspace_id);
 				await updateProgress(job, body.progressMessageId, `⚠️ Gemini unavailable (${geminiError.code}). Trying Groq fallback…\n${job.normalized_url}`, env, fetchImpl);
 				try {
 					extraction = await extractWithGroq(job.normalized_url, page.content, env, fetchImpl);
@@ -118,7 +128,7 @@ export async function processQueueMessage(message, env, fetchImpl = fetch) {
 			await env.DB.prepare("UPDATE jobs SET status = 'completed', provider = ?, result_json = ?, updated_at = CURRENT_TIMESTAMP, completed_at = CURRENT_TIMESTAMP WHERE id = ?").bind(provider, result, job.id).run();
 		}
 		await updateSheetStatus(job, "completed", provider, "Saved successfully", env, fetchImpl, sheetResult.rowNumber ?? null);
-		try { await sendOrEditProgress(job, body.progressMessageId, formatSuccessMessage(job.normalized_url, extraction, sheetResult, extractor), env, fetchImpl, "HTML"); } catch (notificationError) { notificationError.stage = "telegram"; await recordError(env.DB, job.id, notificationError); }
+		try { await sendOrEditProgress(job, body.progressMessageId, formatSuccessMessage(job.normalized_url, extraction, sheetResult, extractor), env, fetchImpl, "HTML"); } catch (notificationError) { notificationError.stage = "telegram"; await recordError(env.DB, job.id, notificationError, job.workspace_id); }
 		message.ack();
 	} catch (error) {
 		const attemptNumber = (job.attempt_count ?? 0) + 1;
@@ -127,14 +137,14 @@ export async function processQueueMessage(message, env, fetchImpl = fetch) {
 		const statusMessage = shouldRetry
 			? `Temporary provider error (${error.code ?? "processor_error"}). Retrying automatically (${attemptNumber}/${MAX_QUEUE_ATTEMPTS})`
 			: `Processing stopped after ${attemptNumber}/${MAX_QUEUE_ATTEMPTS} attempts (${error.code ?? "processor_error"})`;
-		await recordError(env.DB, job.id, error);
+		await recordError(env.DB, job.id, error, job.workspace_id);
 		await env.DB.prepare("UPDATE jobs SET status = ?, provider = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(shouldRetry ? "queued" : "failed", error.provider ?? "processor", job.id).run();
 		await updateSheetStatus(job, shouldRetry ? "queued" : "failed", error.provider ?? "processor", statusMessage, env, fetchImpl);
 		await updateSheetFailure(job, error, env, fetchImpl);
 		const telegramText = shouldRetry
 			? `⏳ ${statusMessage}\n${job.normalized_url}`
 			: `⚠️ Processing failed:\n${job.normalized_url}\nCode: ${error.code ?? "processor_error"}\nAttempts: ${attemptNumber}`;
-		try { await sendOrEditProgress(job, body.progressMessageId, telegramText, env, fetchImpl); } catch (notificationError) { notificationError.stage = "telegram"; await recordError(env.DB, job.id, notificationError); }
+		try { await sendOrEditProgress(job, body.progressMessageId, telegramText, env, fetchImpl); } catch (notificationError) { notificationError.stage = "telegram"; await recordError(env.DB, job.id, notificationError, job.workspace_id); }
 		if (shouldRetry) message.retry();
 		else message.ack();
 	}

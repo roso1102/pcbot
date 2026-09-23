@@ -8,16 +8,18 @@ class FakeD1 {
 	constructor() {
 		this.jobs = new Map();
 		this.errors = [];
+		this.connections = new Map();
 	}
 
 	prepare(sql) {
 		return {
 			bind: (...values) => ({
 				run: async () => {
+					if (sql.includes("INSERT OR IGNORE INTO telegram_connections")) { this.connections.set(values[0], values[1]); return { meta: { changes: 1 } }; }
 					if (sql.includes("INSERT OR IGNORE INTO jobs")) {
-						const [id, updateId, urlIndex, chatId, messageId, originalUrl, normalizedUrl, urlHash] = values;
-						if ([...this.jobs.values()].some((job) => job.url_hash === urlHash || (job.telegram_update_id === updateId && job.url_index === urlIndex))) return { meta: { changes: 0 } };
-						this.jobs.set(id, { id, telegram_update_id: updateId, url_index: urlIndex, chat_id: chatId, message_id: messageId, original_url: originalUrl, normalized_url: normalizedUrl, url_hash: urlHash, status: "queued", record_state: "active" });
+						const [id, workspaceId, updateId, urlIndex, chatId, messageId, originalUrl, normalizedUrl, urlHash, canonicalHash] = values;
+						if ([...this.jobs.values()].some((job) => (job.workspace_id === workspaceId && job.canonical_url_hash === canonicalHash) || (job.workspace_id === workspaceId && job.telegram_update_id === updateId && job.url_index === urlIndex))) return { meta: { changes: 0 } };
+						this.jobs.set(id, { id, workspace_id: workspaceId, telegram_update_id: updateId, url_index: urlIndex, chat_id: chatId, message_id: messageId, original_url: originalUrl, normalized_url: normalizedUrl, url_hash: urlHash, canonical_url_hash: canonicalHash, status: "queued", record_state: "active" });
 						return { meta: { changes: 1 } };
 					}
 					if (sql.includes("INSERT INTO errors")) {
@@ -27,8 +29,9 @@ class FakeD1 {
 					throw new Error(`Unhandled fake SQL: ${sql}`);
 				},
 				first: async () => {
-					if (sql.includes("SELECT id, status, record_state FROM jobs WHERE url_hash")) {
-						const job = [...this.jobs.values()].find((item) => item.url_hash === values[0]);
+					if (sql.includes("FROM telegram_connections")) return this.connections.has(values[0]) ? { workspace_id: this.connections.get(values[0]) } : null;
+					if (sql.includes("SELECT id, status, record_state FROM jobs WHERE url_hash") || sql.includes("SELECT id, status, record_state FROM jobs WHERE workspace_id")) {
+						const job = sql.includes("workspace_id = ?") ? [...this.jobs.values()].find((item) => item.workspace_id === values[0] && item.canonical_url_hash === values[1]) : [...this.jobs.values()].find((item) => item.url_hash === values[0]);
 						return job ? { id: job.id, status: job.status, record_state: job.record_state } : null;
 					}
 					return null;
@@ -135,6 +138,19 @@ describe("telegram intake", () => {
 		expect(await response.json()).toMatchObject({ ok: true, status: "queued", queued: [], duplicates: ["https://example.com/a"] });
 		expect(db.jobs.size).toBe(1);
 		expect(queue.messages).toHaveLength(1);
+	});
+
+	it("allows the same canonical URL in separate workspaces", async () => {
+		const db = new FakeD1();
+		db.connections.set("other-chat", "workspace_other");
+		const queue = new FakeQueue();
+		const first = JSON.stringify({ update_id: 111, message: { chat: { id: 42 }, text: "https://example.com/shared" } });
+		const second = JSON.stringify({ update_id: 111, message: { chat: { id: "other-chat" }, text: "https://example.com/shared" } });
+		await worker.fetch(new Request("https://example.com/telegram", telegramInit(first)), { ...env, DB: db, JOBS_QUEUE: queue });
+		const response = await worker.fetch(new Request("https://example.com/telegram", telegramInit(second)), { ...env, DB: db, JOBS_QUEUE: queue });
+		expect(await response.json()).toMatchObject({ status: "queued", queued: ["https://example.com/shared"], duplicates: [] });
+		expect(db.jobs.size).toBe(2);
+		expect(new Set([...db.jobs.values()].map((job) => job.workspace_id))).toEqual(new Set(["workspace_default", "workspace_other"]));
 	});
 
 	it("treats a repeated Telegram update as harmless", async () => {

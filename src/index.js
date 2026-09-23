@@ -2,6 +2,7 @@ import { processQueueMessage } from "./processor";
 import { CONTENT_TYPES } from "./gemini";
 import { sendTelegramMessage } from "./telegram";
 import { isAdminAuthorized, listDeadLetterJobs, listStuckJobs, markDeadLetterMessage, replayDeadLetterJob, runRetention, runScheduledOperations } from "./operations";
+import { resolveWorkspaceForChat, storageUrlHash } from "./workspaces";
 
 const SERVICE_NAME = "telegram-link-bot";
 const MAX_TELEGRAM_BODY_BYTES = 1_000_000;
@@ -109,9 +110,13 @@ function allowedChat(env, chatId) {
 	return chatId !== undefined && allowed.includes(String(chatId));
 }
 
-async function recordError(db, jobId, stage, errorCode, message, retryable = false) {
+async function recordError(db, jobId, stage, errorCode, message, retryable = false, workspaceId = "workspace_default") {
 	if (!db || !jobId) return;
-	await db.prepare("INSERT INTO errors (job_id, stage, error_code, message, retryable) VALUES (?, ?, ?, ?, ?)").bind(jobId, stage, errorCode, String(message).slice(0, 500), retryable ? 1 : 0).run();
+	try {
+		await db.prepare("INSERT INTO errors (job_id, stage, error_code, message, retryable, workspace_id) VALUES (?, ?, ?, ?, ?, ?)").bind(jobId, stage, errorCode, String(message).slice(0, 500), retryable ? 1 : 0, workspaceId).run();
+	} catch {
+		await db.prepare("INSERT INTO errors (job_id, stage, error_code, message, retryable) VALUES (?, ?, ?, ?, ?)").bind(jobId, stage, errorCode, String(message).slice(0, 500), retryable ? 1 : 0).run();
+	}
 }
 
 function base64UrlEncode(bytes) {
@@ -143,8 +148,8 @@ async function handleSheetAction(request, env) {
 	const recordKey = String(payload?.recordKey ?? "").trim();
 	const requestedBy = String(payload?.requestedBy ?? "sheet-user").slice(0, 200);
 	if (!["archive", "restore", "save_edits", "delete"].includes(action)) return json({ ok: false, error: "invalid_action" }, 400);
-	if (!/^[a-f0-9]{64}$/i.test(recordKey)) return json({ ok: false, error: "invalid_record_key" }, 400);
-	const job = await env.DB.prepare("SELECT id, status, record_state, normalized_url, url_hash, result_json FROM jobs WHERE url_hash = ?").bind(recordKey).first();
+	if (!/^[a-zA-Z0-9:_-]{20,220}$/.test(recordKey)) return json({ ok: false, error: "invalid_record_key" }, 400);
+	const job = await env.DB.prepare("SELECT id, workspace_id, status, record_state, normalized_url, url_hash, result_json FROM jobs WHERE url_hash = ?").bind(recordKey).first();
 	if (!job) return json({ ok: false, error: "job_not_found" }, 404);
 	if (job.status === "processing" || job.status === "queued") return json({ ok: false, error: "job_in_progress" }, 409);
 	if (action === "restore") {
@@ -173,7 +178,11 @@ async function handleSheetAction(request, env) {
 		await env.DB.prepare("UPDATE jobs SET record_state = 'archived', state_changed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(job.id).run();
 		return json({ ok: true, status: "archived", jobId: job.id });
 	}
-	await env.DB.prepare("INSERT INTO job_deletions (job_id, url_hash, normalized_url, result_json, deleted_by) VALUES (?, ?, ?, ?, ?)").bind(job.id, job.url_hash, job.normalized_url, job.result_json ?? null, requestedBy).run();
+	try {
+		await env.DB.prepare("INSERT INTO job_deletions (job_id, url_hash, normalized_url, result_json, deleted_by, workspace_id) VALUES (?, ?, ?, ?, ?, ?)").bind(job.id, job.url_hash, job.normalized_url, job.result_json ?? null, requestedBy, job.workspace_id ?? "workspace_default").run();
+	} catch {
+		await env.DB.prepare("INSERT INTO job_deletions (job_id, url_hash, normalized_url, result_json, deleted_by) VALUES (?, ?, ?, ?, ?)").bind(job.id, job.url_hash, job.normalized_url, job.result_json ?? null, requestedBy).run();
+	}
 	await env.DB.prepare("DELETE FROM jobs WHERE id = ?").bind(job.id).run();
 	return json({ ok: true, status: "deleted", jobId: job.id });
 }
@@ -188,22 +197,25 @@ async function enqueueJobs(update, urls, env) {
 	const senderName = getSenderName(message);
 	const senderUsername = getSenderUsername(message);
 	if (!allowedChat(env, chatId)) return { error: "chat_not_allowed" };
+	const workspaceId = await resolveWorkspaceForChat(env.DB, chatId);
+	if (!workspaceId) return { error: "chat_not_connected" };
 	const queued = [];
 	const queuedJobs = [];
 	const duplicates = [];
 	const duplicateJobs = [];
 	const retries = [];
 	for (const [urlIndex, normalizedUrl] of urls.entries()) {
-		const urlHash = await hashUrl(normalizedUrl);
+		const canonicalUrlHash = await hashUrl(normalizedUrl);
+		const urlHash = storageUrlHash(workspaceId, canonicalUrlHash);
 		const jobId = crypto.randomUUID();
 		const insert = await env.DB.prepare(`
 			INSERT OR IGNORE INTO jobs
-			(id, telegram_update_id, url_index, chat_id, message_id, original_url, normalized_url, url_hash, original_message, user_note, sender_name, sender_username)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`).bind(jobId, updateId, urlIndex, chatId === undefined ? null : String(chatId), message?.message_id ?? null, normalizedUrl, normalizedUrl, urlHash, originalMessage, userNote, senderName, senderUsername).run();
+			(id, workspace_id, telegram_update_id, url_index, chat_id, message_id, original_url, normalized_url, url_hash, canonical_url_hash, original_message, user_note, sender_name, sender_username)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`).bind(jobId, workspaceId, updateId, urlIndex, chatId === undefined ? null : String(chatId), message?.message_id ?? null, normalizedUrl, normalizedUrl, urlHash, canonicalUrlHash, originalMessage, userNote, senderName, senderUsername).run();
 		let selectedJobId = jobId;
 		if (!insert.meta?.changes) {
-			const existing = await env.DB.prepare("SELECT id, status, record_state FROM jobs WHERE url_hash = ?").bind(urlHash).first();
+			const existing = await env.DB.prepare("SELECT id, status, record_state FROM jobs WHERE workspace_id = ? AND canonical_url_hash = ?").bind(workspaceId, canonicalUrlHash).first();
 			selectedJobId = existing?.id;
 			duplicates.push(normalizedUrl);
 			if (selectedJobId) {
@@ -223,7 +235,7 @@ async function enqueueJobs(update, urls, env) {
 					// A progress message is optional; the queued job must still be accepted.
 				}
 			}
-			await env.JOBS_QUEUE.send({ version: 1, jobId: selectedJobId, correlationId: selectedJobId, progressMessageId }, { contentType: "json" });
+			await env.JOBS_QUEUE.send({ version: 1, jobId: selectedJobId, correlationId: selectedJobId, progressMessageId, workspaceId }, { contentType: "json" });
 			if (!duplicates.includes(normalizedUrl)) {
 				queued.push(normalizedUrl);
 				queuedJobs.push({ jobId: selectedJobId, url: normalizedUrl, progressMessageId });
@@ -281,10 +293,10 @@ async function handleAdmin(request, env) {
 	if (!isAdminAuthorized(request, env)) return json({ ok: false, error: "unauthorized" }, 401);
 	const url = new URL(request.url);
 	if (url.pathname === "/admin/dlq" && request.method === "GET") {
-		return json({ ok: true, jobs: await listDeadLetterJobs(env.DB, url.searchParams.get("limit")) });
+		return json({ ok: true, workspaceId: "workspace_default", jobs: await listDeadLetterJobs(env.DB, url.searchParams.get("limit"), "workspace_default") });
 	}
 	if (url.pathname === "/admin/stuck" && request.method === "GET") {
-		return json({ ok: true, jobs: await listStuckJobs(env.DB, env) });
+		return json({ ok: true, workspaceId: "workspace_default", jobs: await listStuckJobs(env.DB, env, "workspace_default") });
 	}
 	if (url.pathname === "/admin/dlq/replay" && request.method === "POST") {
 		let body;

@@ -24,6 +24,21 @@ describe("Telegram success formatting", () => {
 });
 
 describe("Queue redelivery", () => {
+	it("acks a queue message whose workspace hint does not match D1", async () => {
+		const errors = [];
+		const db = {
+			prepare: (sql) => ({ bind: (...values) => ({
+				first: async () => sql.includes("FROM jobs") ? { id: "job-1", workspace_id: "workspace_default", status: "queued" } : null,
+				run: async () => { if (sql.includes("INSERT INTO errors")) errors.push(values); return { meta: { changes: 1 } }; },
+			}) }),
+		};
+		const message = { body: { version: 1, jobId: "job-1", workspaceId: "workspace_other" }, ack: () => { message.acked = true; }, retry: () => { message.retried = true; } };
+		await processQueueMessage(message, { DB: db }, async () => new Response());
+		expect(message.acked).toBe(true);
+		expect(message.retried).not.toBe(true);
+		expect(errors.length).toBe(1);
+	});
+
 	it("acknowledges a redelivered completed job without reprocessing", async () => {
 		let fetched = false;
 		const db = {

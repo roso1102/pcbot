@@ -15,9 +15,9 @@ A Cloudflare Workers Telegram bot that accepts URLs, rejects duplicate submissio
 - Cloudflare Queues: main and dead-letter queues created
 - Existing Apps Script bot: code remains untouched for rollback, but its webhook is no longer active
 - Intended GitHub repository: <https://github.com/roso1102/pcbot.git>
-- Current phase: Phase 12 baseline/hardening complete; hosted multi-workspace phases are intentionally paused pending owner approval
+- Current phase: Phase 13 workspace ownership complete; Phase 14 hosted setup work has not started
 
-Phases 1–12 have passed the current single-user migration and hardening gates. Phase 12 added protected DLQ inspection/replay, deduplicated stuck-job alerts, scheduled retention, a D1 restore rehearsal, and operational tests. Hosted multi-workspace work remains paused until the owner explicitly approves it. See [ACTION_PLAN.md](./ACTION_PLAN.md) for the phase gate and [HANDOFF.md](./HANDOFF.md) for the continuation point.
+Phases 1–12 passed the single-user migration and hardening gates. Phase 13 now adds additive workspace ownership: existing data is assigned to `workspace_default`, Telegram chats resolve to registered workspaces, and URL/update uniqueness is scoped per workspace. Phase 14 hosted setup work remains untouched. See [ACTION_PLAN.md](./ACTION_PLAN.md) for the phase gate and [HANDOFF.md](./HANDOFF.md) for the continuation point.
 
 ## Target architecture
 
